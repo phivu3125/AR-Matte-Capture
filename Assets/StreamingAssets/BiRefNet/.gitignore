@@ -1,0 +1,10 @@
+# Model cache (downloaded at runtime)
+models/
+
+# Captures (user generated)
+Captures/*
+!Captures/.gitkeep
+
+# Temp files
+*.tmp
+*.log

@@ -1,0 +1,21 @@
+# BiRefNet Background Removal Dependencies
+# Python 3.10+ required
+
+# PyTorch with CUDA support
+# Install separately with: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Hugging Face Transformers for BiRefNet model
+transformers>=4.35.0
+
+# BiRefNet model dependencies
+einops>=0.8.0
+kornia>=0.7.0
+timm>=1.0.0
+
+# Image processing
+Pillow>=9.0.0
+
+# For building executable
+pyinstaller>=6.0.0

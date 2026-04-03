@@ -8,10 +8,16 @@ using HoiAnLantern;
 /// <summary>
 /// One-shot editor script for bd-085: restructure scene hierarchy and wire new components.
 /// Run via Tools > BD-085 > Restructure Scene.
-/// Safe to re-run (checks for existing objects before creating duplicates).
+/// SAFE: only reparents root-level objects and existing section headers.
+/// Children of functional parents are NEVER detached.
 /// </summary>
 public static class SceneRestructure_BD085
 {
+    // Old section names in the existing scene
+    static readonly string[] OldSectionNames = {
+        "Systems", "Gameplay", "Tracking", "UI", "Environement", "RVM Pipeline"
+    };
+
     [MenuItem("Tools/BD-085/Restructure Scene")]
     public static void Restructure()
     {
@@ -23,87 +29,77 @@ public static class SceneRestructure_BD085
 
         Undo.SetCurrentGroupName("BD-085 Scene Restructure");
 
-        // ─── Phase 1: Rename existing sections ───
-        RenameIfExists("Systems", "═══ SYSTEM ═══");
-        RenameIfExists("UI", "═══ UI ═══");
-        RenameIfExists("Environement", "═══ ENVIRONMENT ═══");
+        // ─── Phase 1: Rename existing root sections ───
+        RenameRoot("Systems", "═══ SYSTEM ═══");
+        RenameRoot("UI", "═══ UI ═══");
+        RenameRoot("Environement", "═══ ENVIRONMENT ═══");
 
-        // ─── Phase 2: Create missing sections ───
-        var sysSection = FindOrCreate("═══ SYSTEM ═══");
-        var camSection = FindOrCreate("═══ CAMERAS ═══");
-        var arSection = FindOrCreate("═══ AR DISPLAY ═══");
-        var scanSection = FindOrCreate("═══ SCANNING ═══");
-        var lanternSection = FindOrCreate("═══ LANTERN FLOW ═══");
-        var envSection = FindOrCreate("═══ ENVIRONMENT ═══");
-        var uiSection = FindOrCreate("═══ UI ═══");
-        var fxSection = FindOrCreate("═══ EFFECTS ═══");
+        // ─── Phase 2: Create missing section headers ───
+        var sysSection = FindOrCreateRoot("═══ SYSTEM ═══");
+        var camSection = FindOrCreateRoot("═══ CAMERAS ═══");
+        var arSection = FindOrCreateRoot("═══ AR DISPLAY ═══");
+        var scanSection = FindOrCreateRoot("═══ SCANNING ═══");
+        var lanternSection = FindOrCreateRoot("═══ LANTERN FLOW ═══");
+        var envSection = FindOrCreateRoot("═══ ENVIRONMENT ═══");
+        var uiSection = FindOrCreateRoot("═══ UI ═══");
+        var fxSection = FindOrCreateRoot("═══ EFFECTS ═══");
 
-        // ─── Phase 3: Reparent existing objects ───
-        // System
-        SafeReparent("Webcam Manager", sysSection);
-        SafeReparent("Audio Manager", sysSection);
-        SafeReparent("WindManager", sysSection);
-        SafeReparent("Texture Load Manager", sysSection);
-        SafeReparent("Screenshot Handler", sysSection);
+        // ─── Phase 3: Move old sections under new parent sections ───
+        // "RVM Pipeline" (entire group with children) → under AR DISPLAY
+        MoveRootUnder("RVM Pipeline", arSection);
+        // "Tracking" (entire group with children) → under AR DISPLAY
+        MoveRootUnder("Tracking", arSection);
+        // "Gameplay" (entire group with children) → under LANTERN FLOW
+        MoveRootUnder("Gameplay", lanternSection);
 
-        // Cameras
-        SafeReparent("Main Camera", camSection);
-        SafeReparent("Camera Target Pos", camSection);
+        // ─── Phase 4: Move root-level objects ONLY ───
+        // These are objects at scene root (no parent), safe to move.
+        MoveRootUnder("Webcam Manager", sysSection);
+        MoveRootUnder("Audio Manager", sysSection);
+        MoveRootUnder("WindManager", sysSection);
+        MoveRootUnder("Texture Load Manager", sysSection);
+        MoveRootUnder("Screenshot Handler", sysSection);
 
-        // AR Display
-        SafeReparent("RVM Pipeline", arSection);
-        SafeReparent("User Display Image", arSection);
-        SafeReparent("Main Lantern Tracker", arSection);
-        SafeReparent("Tracking", arSection);
+        MoveRootUnder("Main Camera", camSection);
+        MoveRootUnder("Camera Target Pos", camSection);
 
-        // Scanning
-        SafeReparent("Paper scanner", scanSection);
-        SafeReparent("Marker Manager", scanSection);
-        SafeReparent("Paper Scan Webcam Source", scanSection);
-        SafeReparent("Portrait Webcam Source", scanSection);
-        SafeReparent("Live feed", scanSection);
-        SafeReparent("Paper", scanSection);
-        SafeReparent("Paper Frame", scanSection);
-        SafeReparent("marker 0", scanSection);
-        SafeReparent("marker 1", scanSection);
-        SafeReparent("marker 2", scanSection);
-        SafeReparent("marker 3", scanSection);
+        MoveRootUnder("Main Lantern Tracker", arSection);
 
-        // Lantern Flow
-        SafeReparent("Scan Latern Manager", lanternSection);
-        SafeReparent("Gameplay", lanternSection);
-        SafeReparent("Check AR Fit Target", lanternSection);
-        SafeReparent("Main Latern", lanternSection);
-        SafeReparent("Target Latern", lanternSection);
-        SafeReparent("Hang Point", lanternSection);
+        MoveRootUnder("Paper scanner", scanSection);
+        MoveRootUnder("Marker Manager", scanSection);
+        MoveRootUnder("Paper Scan Webcam Source", scanSection);
+        MoveRootUnder("Portrait Webcam Source", scanSection);
+        MoveRootUnder("Live feed", scanSection);
+        MoveRootUnder("Paper", scanSection);
+        MoveRootUnder("Paper Frame", scanSection);
+        MoveRootUnder("marker 0", scanSection);
+        MoveRootUnder("marker 1", scanSection);
+        MoveRootUnder("marker 2", scanSection);
+        MoveRootUnder("marker 3", scanSection);
 
-        // Environment
-        SafeReparent("Directional Light", envSection);
-        SafeReparent("Trees", envSection);
-        SafeReparent("Roads", envSection);
-        SafeReparent("Ropes", envSection);
-        SafeReparent("Ropes (1)", envSection);
-        SafeReparent("Ropes (2)", envSection);
-        SafeReparent("Reflection Probe", envSection);
-        SafeReparent("Boat", envSection);
-        SafeReparent("Boat (1)", envSection);
-        SafeReparent("Boat (2)", envSection);
+        MoveRootUnder("Scan Latern Manager", lanternSection);
+        MoveRootUnder("Check AR Fit Target", lanternSection);
+        MoveRootUnder("Main Latern", lanternSection);
+        MoveRootUnder("Target Latern", lanternSection);
+        MoveRootUnder("Hang Point", lanternSection);
 
-        // UI
-        SafeReparent("Canvas", uiSection);
+        MoveRootUnder("Directional Light", envSection);
+        MoveRootUnder("Reflection Probe", envSection);
 
-        Debug.Log("[BD-085] Phase 3 complete: objects reparented.");
+        MoveRootUnder("Canvas", uiSection);
 
-        // ─── Phase 4: Add new scanning components ───
+        Debug.Log("[BD-085] Phase 3-4 complete: sections and root objects reparented.");
+
+        // ─── Phase 5: Add new scanning components ───
         var sessionGO = FindOrCreateChild("Scan Session Controller", scanSection);
         AddComponentIfMissing<ScanSessionController>(sessionGO);
 
-        var paperScannerGO = GameObject.Find("Paper scanner");
+        var paperScannerGO = FindAnywhere("Paper scanner");
         PaperScanDetector detector = null;
         if (paperScannerGO != null)
             detector = AddComponentIfMissing<PaperScanDetector>(paperScannerGO);
 
-        var markerManagerGO = GameObject.Find("Marker Manager");
+        var markerManagerGO = FindAnywhere("Marker Manager");
         MarkerScanPresenter presenter = null;
         if (markerManagerGO != null)
             presenter = AddComponentIfMissing<MarkerScanPresenter>(markerManagerGO);
@@ -114,14 +110,13 @@ public static class SceneRestructure_BD085
         var interactionGO = FindOrCreateChild("Lantern Interaction Controller", lanternSection);
         AddComponentIfMissing<LanternInteractionController>(interactionGO);
 
-        Debug.Log("[BD-085] Phase 4 complete: new components added.");
+        Debug.Log("[BD-085] Phase 5 complete: new components added.");
 
-        // ─── Phase 5: Wire serialized references ───
+        // ─── Phase 6: Wire serialized references ───
         WireReferences(paperScannerGO, sessionGO, markerManagerGO);
+        Debug.Log("[BD-085] Phase 6 complete: references wired.");
 
-        Debug.Log("[BD-085] Phase 5 complete: references wired.");
-
-        // ─── Phase 6: Set sibling order for sections ───
+        // ─── Phase 7: Set sibling order for sections ───
         SetOrder(sysSection, 0);
         SetOrder(camSection, 1);
         SetOrder(arSection, 2);
@@ -132,8 +127,125 @@ public static class SceneRestructure_BD085
         SetOrder(fxSection, 7);
 
         EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
-        Debug.Log("[BD-085] Scene restructure complete! Save the scene with Ctrl+S.");
+        Debug.Log("[BD-085] Scene restructure complete! Save the scene (Ctrl+S).");
     }
+
+    // ─── Core Helpers ───
+
+    /// <summary>
+    /// ONLY moves an object if it's currently at scene root (parent == null)
+    /// or already a direct child of an old/new section header.
+    /// NEVER detaches children from functional parents.
+    /// </summary>
+    static void MoveRootUnder(string name, GameObject newParent)
+    {
+        var go = FindAnywhere(name);
+        if (go == null) return;
+        if (go.transform.parent == newParent.transform) return; // already there
+
+        // Only move if at root level OR direct child of an old/new section
+        if (go.transform.parent == null || IsSection(go.transform.parent.gameObject))
+        {
+            Undo.SetTransformParent(go.transform, newParent.transform, "Move " + name);
+        }
+        else
+        {
+            Debug.Log($"[BD-085] Skipped '{name}' — child of '{go.transform.parent.name}', not reparenting.");
+        }
+    }
+
+    static bool IsSection(GameObject go)
+    {
+        if (go.name.Contains("═══")) return true;
+        foreach (var old in OldSectionNames)
+            if (go.name == old) return true;
+        return false;
+    }
+
+    static GameObject FindAnywhere(string name)
+    {
+        // GameObject.Find only finds active objects. Try that first.
+        var go = GameObject.Find(name);
+        if (go != null) return go;
+
+        // Also search inactive objects
+        foreach (var root in EditorSceneManager.GetActiveScene().GetRootGameObjects())
+        {
+            var found = FindInChildren(root.transform, name);
+            if (found != null) return found.gameObject;
+        }
+        return null;
+    }
+
+    static Transform FindInChildren(Transform parent, string name)
+    {
+        if (parent.name == name) return parent;
+        for (int i = 0; i < parent.childCount; i++)
+        {
+            var found = FindInChildren(parent.GetChild(i), name);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    static void RenameRoot(string oldName, string newName)
+    {
+        // Only rename root-level objects
+        foreach (var root in EditorSceneManager.GetActiveScene().GetRootGameObjects())
+        {
+            if (root.name == oldName && FindAnywhere(newName) == null)
+            {
+                Undo.RecordObject(root, "Rename " + oldName);
+                root.name = newName;
+                return;
+            }
+        }
+    }
+
+    static GameObject FindOrCreateRoot(string name)
+    {
+        var go = FindAnywhere(name);
+        if (go == null)
+        {
+            go = new GameObject(name);
+            Undo.RegisterCreatedObjectUndo(go, "Create " + name);
+        }
+        return go;
+    }
+
+    static GameObject FindOrCreateChild(string name, GameObject parent)
+    {
+        var go = FindAnywhere(name);
+        if (go == null)
+        {
+            go = new GameObject(name);
+            Undo.RegisterCreatedObjectUndo(go, "Create " + name);
+        }
+        if (parent != null && go.transform.parent != parent.transform)
+            Undo.SetTransformParent(go.transform, parent.transform, "Reparent " + name);
+        return go;
+    }
+
+    static T AddComponentIfMissing<T>(GameObject go) where T : Component
+    {
+        var existing = go.GetComponent<T>();
+        if (existing != null) return existing;
+        return Undo.AddComponent<T>(go);
+    }
+
+    static T FindComponent<T>(string gameObjectName) where T : Component
+    {
+        var go = FindAnywhere(gameObjectName);
+        return go != null ? go.GetComponent<T>() : null;
+    }
+
+    static void SetOrder(GameObject go, int index)
+    {
+        if (go != null && go.transform.parent == null)
+            go.transform.SetSiblingIndex(index);
+    }
+
+    // ─── Wiring ───
 
     static void WireReferences(GameObject paperScannerGO, GameObject sessionGO, GameObject markerManagerGO)
     {
@@ -160,14 +272,14 @@ public static class SceneRestructure_BD085
             var so = new SerializedObject(detector);
             var webcamSrc = FindComponent<WebcamSource>("Paper Scan Webcam Source");
             SetRef(so, "webcamSource", webcamSrc);
-            var liveFeedGO = GameObject.Find("Live feed");
+            var liveFeedGO = FindAnywhere("Live feed");
             if (liveFeedGO != null)
                 SetRef(so, "previewRenderer", liveFeedGO.GetComponent<Renderer>());
             so.ApplyModifiedProperties();
         }
 
         // Wire LanternInteractionController
-        var interactionGO = GameObject.Find("Lantern Interaction Controller");
+        var interactionGO = FindAnywhere("Lantern Interaction Controller");
         if (interactionGO != null)
         {
             var ctrl = interactionGO.GetComponent<LanternInteractionController>();
@@ -181,14 +293,14 @@ public static class SceneRestructure_BD085
         }
 
         // Wire ScanLanternManager.rvmDisplay
-        var slmGO = GameObject.Find("Scan Latern Manager");
+        var slmGO = FindAnywhere("Scan Latern Manager");
         if (slmGO != null)
         {
             var slm = slmGO.GetComponent<ScanLanternManager>();
             if (slm != null)
             {
                 var so = new SerializedObject(slm);
-                var rvmDisplay = GameObject.Find("User Display Image");
+                var rvmDisplay = FindAnywhere("User Display Image");
                 SetRef(so, "rvmDisplay", rvmDisplay);
                 so.ApplyModifiedProperties();
             }
@@ -203,10 +315,12 @@ public static class SceneRestructure_BD085
 
     static void WirePresenterFromMarkerManager(MarkerScanPresenter presenter, GameObject mmGO)
     {
-        var mmSO = new SerializedObject(mmGO.GetComponent<MarkerManager>());
+        var mm = mmGO.GetComponent<MarkerManager>();
+        if (mm == null) return;
+
+        var mmSO = new SerializedObject(mm);
         var prSO = new SerializedObject(presenter);
 
-        // Copy marker refs
         CopyProperty(mmSO, "marker0", prSO, "marker0");
         CopyProperty(mmSO, "markerBorder0", prSO, "markerBorder0");
         CopyProperty(mmSO, "marker1", prSO, "marker1");
@@ -216,85 +330,10 @@ public static class SceneRestructure_BD085
         CopyProperty(mmSO, "marker3", prSO, "marker3");
         CopyProperty(mmSO, "markerBorder3", prSO, "markerBorder3");
 
-        // Copy texture arrays — MarkerManager uses Lists, Presenter uses arrays
-        // These need manual assignment in Inspector if types differ
-        var mmMissing = mmSO.FindProperty("missingMaterials");
-        var prMissing = prSO.FindProperty("missingTextures");
-        if (mmMissing != null && prMissing != null && mmMissing.isArray && prMissing.isArray)
-        {
-            prMissing.arraySize = mmMissing.arraySize;
-            for (int i = 0; i < mmMissing.arraySize; i++)
-                prMissing.GetArrayElementAtIndex(i).objectReferenceValue =
-                    mmMissing.GetArrayElementAtIndex(i).objectReferenceValue;
-        }
-
-        var mmDetected = mmSO.FindProperty("detectedMaterials");
-        var prDetected = prSO.FindProperty("detectedTextures");
-        if (mmDetected != null && prDetected != null && mmDetected.isArray && prDetected.isArray)
-        {
-            prDetected.arraySize = mmDetected.arraySize;
-            for (int i = 0; i < mmDetected.arraySize; i++)
-                prDetected.GetArrayElementAtIndex(i).objectReferenceValue =
-                    mmDetected.GetArrayElementAtIndex(i).objectReferenceValue;
-        }
+        CopyArray(mmSO, "missingMaterials", prSO, "missingTextures");
+        CopyArray(mmSO, "detectedMaterials", prSO, "detectedTextures");
 
         prSO.ApplyModifiedProperties();
-    }
-
-    // ─── Helpers ───
-
-    static GameObject FindOrCreate(string name)
-    {
-        var go = GameObject.Find(name);
-        if (go == null)
-        {
-            go = new GameObject(name);
-            Undo.RegisterCreatedObjectUndo(go, "Create " + name);
-        }
-        return go;
-    }
-
-    static GameObject FindOrCreateChild(string name, GameObject parent)
-    {
-        var go = GameObject.Find(name);
-        if (go == null)
-        {
-            go = new GameObject(name);
-            Undo.RegisterCreatedObjectUndo(go, "Create " + name);
-        }
-        if (parent != null && go.transform.parent != parent.transform)
-            Undo.SetTransformParent(go.transform, parent.transform, "Reparent " + name);
-        return go;
-    }
-
-    static void RenameIfExists(string oldName, string newName)
-    {
-        var go = GameObject.Find(oldName);
-        if (go != null && GameObject.Find(newName) == null)
-        {
-            Undo.RecordObject(go, "Rename " + oldName);
-            go.name = newName;
-        }
-    }
-
-    static void SafeReparent(string name, GameObject parent)
-    {
-        var go = GameObject.Find(name);
-        if (go != null && go.transform.parent != parent.transform)
-            Undo.SetTransformParent(go.transform, parent.transform, "Reparent " + name);
-    }
-
-    static T AddComponentIfMissing<T>(GameObject go) where T : Component
-    {
-        var existing = go.GetComponent<T>();
-        if (existing != null) return existing;
-        return Undo.AddComponent<T>(go);
-    }
-
-    static T FindComponent<T>(string gameObjectName) where T : Component
-    {
-        var go = GameObject.Find(gameObjectName);
-        return go != null ? go.GetComponent<T>() : null;
     }
 
     static void SetRef(SerializedObject so, string propName, Object value)
@@ -314,9 +353,15 @@ public static class SceneRestructure_BD085
             dst.objectReferenceValue = src.objectReferenceValue;
     }
 
-    static void SetOrder(GameObject go, int index)
+    static void CopyArray(SerializedObject from, string fromProp, SerializedObject to, string toProp)
     {
-        if (go != null)
-            go.transform.SetSiblingIndex(index);
+        var src = from.FindProperty(fromProp);
+        var dst = to.FindProperty(toProp);
+        if (src == null || dst == null || !src.isArray || !dst.isArray) return;
+
+        dst.arraySize = src.arraySize;
+        for (int i = 0; i < src.arraySize; i++)
+            dst.GetArrayElementAtIndex(i).objectReferenceValue =
+                src.GetArrayElementAtIndex(i).objectReferenceValue;
     }
 }

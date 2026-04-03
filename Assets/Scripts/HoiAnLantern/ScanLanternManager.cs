@@ -70,6 +70,7 @@ public class ScanLanternManager : MonoBehaviour
     private Vector3 originalCameraPosition;
     private Quaternion originalCameraRotation;
     private float originalFOV;
+    private Material _currentRandomMaterial;
 
     #endregion
 
@@ -174,9 +175,13 @@ public class ScanLanternManager : MonoBehaviour
     {
         if (materialVariants == null || materialVariants.Length == 0) return;
 
-        int idx = UnityEngine.Random.Range(0, materialVariants.Length);
-        Material mat = new Material(materialVariants[idx]);
+        // Destroy previous random material to prevent leak
+        if (_currentRandomMaterial != null)
+            Destroy(_currentRandomMaterial);
 
+        int idx = UnityEngine.Random.Range(0, materialVariants.Length);
+        _currentRandomMaterial = new Material(materialVariants[idx]);
+        Material mat = _currentRandomMaterial;
         // Set point light colors
         if (demoLoader?.pointLightObject != null)
             demoLoader.pointLightObject.GetComponent<Light>().color = mat.color;

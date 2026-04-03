@@ -1,0 +1,116 @@
+// ===== Shared variables =====
+RWTexture2D<float4> _Result;
+Texture2D<float4> _SourceTex;
+Texture2D<float4> _MaskTex;
+Texture2D<float4> _ColorTex;
+Texture2D<float> _DepthTex;
+SamplerState sampler_linear_clamp;
+
+int _TexResX;
+int _TexResY;
+int _MaskTexResX;
+int _MaskTexResY;
+int _ColorWidth;
+int _ColorHeight;
+int _DepthWidth;
+int _DepthHeight;
+
+float2 _ModelScale;
+float2 _ModelOffset;
+float _FlipMaskY;
+float _AlphaThreshold;
+float _AlphaBias;
+float _AlphaSmoothness;
+float _MinDist;
+float _MaxDist;
+
+// ===== Kernel 1: YOLO Mask Blend =====
+#pragma kernel FgFiltYolo
+
+[numthreads(16,16,1)]
+void FgFiltYolo (uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)_TexResX || id.y >= (uint)_TexResY)
+        return;
+    
+    int2 pix = int2(id.x, id.y);
+    
+    float4 src = _SourceTex.Load(int3(pix, 0));  // THÊM: Đọc color từ base
+    
+    float2 cameraUV = (float2(pix) + 0.5) / float2(_TexResX, _TexResY);
+    
+    float2 modelUV = (cameraUV - _ModelOffset) / _ModelScale;
+    
+    if (modelUV.x < 0.0 || modelUV.x > 1.0 || modelUV.y < 0.0 || modelUV.y > 1.0)
+    {
+        _Result[pix] = float4(0,0,0,0);  // Transparent outside crop
+        return;
+    }
+    
+    if (_FlipMaskY > 0.5)
+        modelUV.y = 1.0 - modelUV.y;
+    
+    float4 maskSample = _MaskTex.SampleLevel(sampler_linear_clamp, modelUV, 0);
+    
+    float alpha = maskSample.a;
+    
+    // Apply bias and smoothstep (giống cũ + feather)
+    alpha = alpha * _AlphaBias;
+    alpha = smoothstep(_AlphaThreshold - _AlphaSmoothness, _AlphaThreshold + _AlphaSmoothness, alpha);
+    
+    alpha = saturate(alpha);
+    
+    if (alpha <= 0.001)
+        _Result[pix] = float4(0,0,0,0);  // Transparent black
+    else
+        _Result[pix] = float4(src.rgb, alpha);  // THÊM: Giữ src color, set alpha
+}
+
+// ===== Kernel 2: Depth Filter (pre-processing) =====
+#pragma kernel DepthFilter
+[numthreads(8,8,1)]
+void DepthFilter(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)_ColorWidth || id.y >= (uint)_ColorHeight)
+        return;
+    
+    int2 pix = int2(id.xy);
+    
+    // ✅ GIỜ depth và color CÙNG resolution và alignment
+    // Không cần map phức tạp nữa, chỉ cần đọc cùng tọa độ!
+    float depthMm = _DepthTex.Load(int3(pix, 0)).r * 65535.0;
+    
+    // Filter: giữ color nếu trong vùng
+    float4 color = _ColorTex.Load(int3(pix, 0));
+    
+    if (depthMm < _MinDist || depthMm > _MaxDist || depthMm < 1.0)
+        color = float4(0, 0, 0, 0);  // Transparent
+    
+    _Result[pix] = color;
+}
+
+// ===== Kernel 3: Depth Mask Filter (post-processing) =====
+#pragma kernel DepthMaskFilter
+
+[numthreads(8,8,1)]
+void DepthMaskFilter(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)_TexResX || id.y >= (uint)_TexResY)
+        return;
+    
+    int2 pix = int2(id.xy);
+    
+    // Read YOLO mask
+    float4 mask = _MaskTex.Load(int3(pix, 0));
+    
+    // Read aligned depth (same resolution as color/mask)
+    float depthMm = _DepthTex.Load(int3(pix, 0)).r * 65535.0;
+    
+    // Zero out alpha if depth outside range
+    if (depthMm < _MinDist || depthMm > _MaxDist || depthMm < 1.0)
+    {
+        mask.a = 0.0;  // Force transparent
+    }
+    
+    _Result[pix] = mask;
+}

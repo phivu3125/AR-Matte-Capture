@@ -134,6 +134,60 @@ namespace ARMatteCapture.Webcam
             Play();
         }
 
+        /// <summary>
+        /// Change the target device at runtime. Restarts if currently playing.
+        /// </summary>
+        public void SetDevice(string newDeviceName)
+        {
+            deviceName = newDeviceName;
+            deviceIndex = -1; // force name-based resolve
+            if (webcamTexture != null) Restart();
+        }
+
+        /// <summary>
+        /// Change the target device by index at runtime. Restarts if currently playing.
+        /// </summary>
+        public void SetDeviceIndex(int newIndex)
+        {
+            deviceName = "";
+            deviceIndex = newIndex;
+            if (webcamTexture != null) Restart();
+        }
+
+        /// <summary>
+        /// Change resolution and FPS at runtime. Restarts if currently playing.
+        /// </summary>
+        public void SetResolution(int newWidth, int newHeight, int newFps)
+        {
+            width = newWidth;
+            height = newHeight;
+            fps = newFps;
+            if (webcamTexture != null) Restart();
+        }
+
+        /// <summary>
+        /// Set device, resolution, and FPS in one call with a single restart.
+        /// Avoids double-restart timing issues when changing multiple settings.
+        /// </summary>
+        public void Configure(string newDeviceName, int newWidth, int newHeight, int newFps)
+        {
+            deviceName = newDeviceName;
+            deviceIndex = -1;
+            width = newWidth;
+            height = newHeight;
+            fps = newFps;
+            Restart();
+        }
+
+        /// <summary>Current requested width.</summary>
+        public int RequestedWidth => width;
+        /// <summary>Current requested height.</summary>
+        public int RequestedHeight => height;
+        /// <summary>Current requested FPS.</summary>
+        public int RequestedFPS => fps;
+        /// <summary>Current device index.</summary>
+        public int DeviceIndex => deviceIndex;
+
         #endregion
 
         #region Private Methods

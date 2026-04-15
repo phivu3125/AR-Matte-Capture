@@ -76,6 +76,7 @@ public static class SceneRestructure_BD085
         MoveRootUnder("marker 1", scanSection);
         MoveRootUnder("marker 2", scanSection);
         MoveRootUnder("marker 3", scanSection);
+        MoveRootUnder("scan-table", scanSection);
 
         MoveRootUnder("Scan Latern Manager", lanternSection);
         MoveRootUnder("Check AR Fit Target", lanternSection);
@@ -87,6 +88,9 @@ public static class SceneRestructure_BD085
         MoveRootUnder("Reflection Probe", envSection);
 
         MoveRootUnder("Canvas", uiSection);
+
+        // Effects
+        MoveRootUnder("CFXR4 Firework HDR Shoot Single (Random Color)", fxSection);
 
         Debug.Log("[BD-085] Phase 3-4 complete: sections and root objects reparented.");
 

@@ -121,15 +121,21 @@ public class ScanLanternManager : MonoBehaviour
     }
 
     /// <summary>
-    /// Called after a successful scan. Refreshes textures, waits, then
-    /// returns camera to original position and resumes tracking.
+    /// Called after a successful scan. Applies captured texture directly (if available)
+    /// or falls back to full folder refresh. Then returns camera to original position.
     /// </summary>
-    public void OnScanningSuccess()
+    public void OnScanningSuccess(Texture2D capturedTexture = null)
     {
         Sequence seq = DOTween.Sequence();
 
-        // Refresh textures to pick up newly captured scan image
-        seq.AppendCallback(() => TextureManager.Instance?.RefreshTextures());
+        // Apply captured texture to cache and re-distribute to all objects (no disk I/O)
+        seq.AppendCallback(() =>
+        {
+            if (capturedTexture != null)
+                TextureManager.Instance?.AddCapturedTexture(capturedTexture);
+            else
+                TextureManager.Instance?.RefreshTextures(); // fallback for manual calls
+        });
 
         // Wait before transitioning back
         seq.AppendInterval(postScanDelay);
@@ -182,11 +188,14 @@ public class ScanLanternManager : MonoBehaviour
         int idx = UnityEngine.Random.Range(0, materialVariants.Length);
         _currentRandomMaterial = new Material(materialVariants[idx]);
         Material mat = _currentRandomMaterial;
-        // Set point light colors
-        if (demoLoader?.pointLightObject != null)
-            demoLoader.pointLightObject.GetComponent<Light>().color = mat.color;
-        if (mainLoader?.pointLightObject != null)
-            mainLoader.pointLightObject.GetComponent<Light>().color = mat.color;
+        // Set point light colors (only if material has _Color property)
+        if (mat.HasProperty("_Color"))
+        {
+            if (demoLoader?.pointLightObject != null)
+                demoLoader.pointLightObject.GetComponent<Light>().color = mat.color;
+            if (mainLoader?.pointLightObject != null)
+                mainLoader.pointLightObject.GetComponent<Light>().color = mat.color;
+        }
 
         // Apply to demo lantern faces
         if (demoLoader != null)

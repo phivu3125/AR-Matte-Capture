@@ -59,6 +59,12 @@ namespace ARMatteCapture.Scanning
         /// </summary>
         public event Action<string> OnTextureExported;
 
+        /// <summary>
+        /// Fired with the captured Texture2D so downstream can apply it
+        /// without re-reading from disk (avoids synchronous I/O hitch).
+        /// </summary>
+        public event Action<Texture2D> OnTextureCaptured;
+
         #endregion
 
         #region Properties
@@ -322,8 +328,18 @@ namespace ARMatteCapture.Scanning
             Utils.matToTexture2D(tmpFrame, saveTex);
             byte[] bytes = saveTex.EncodeToPNG();
             File.WriteAllBytes(filePath, bytes);
-            Destroy(saveTex);
             tmpFrame.Dispose();
+
+            // Pass captured texture to subscribers (avoids re-reading from disk).
+            // Subscriber takes ownership; if nobody listens, destroy to prevent leak.
+            if (OnTextureCaptured != null)
+            {
+                OnTextureCaptured.Invoke(saveTex);
+            }
+            else
+            {
+                Destroy(saveTex);
+            }
 
             Debug.Log($"[PaperScanDetector] Saved image to {filePath}");
             OnTextureExported?.Invoke(filePath);

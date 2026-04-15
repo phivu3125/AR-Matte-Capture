@@ -20,6 +20,12 @@ public class PaperScan : MonoBehaviour
 
     [HideInInspector] public bool isNewClientScan = true;
 
+    /// <summary>
+    /// Cached texture from the last export, passed directly to avoid disk I/O.
+    /// Ownership transfers to ScanLanternManager on success.
+    /// </summary>
+    private Texture2D _lastCapturedTexture;
+
     void Awake()
     {
         if (instance == null) instance = this;
@@ -34,6 +40,7 @@ public class PaperScan : MonoBehaviour
             detector.OnMarkerFound += OnFound;
             detector.OnMarkerLost += OnLost;
             detector.OnTextureExported += OnExported;
+            detector.OnTextureCaptured += OnTextureCaptured;
         }
         if (sessionController != null)
         {
@@ -53,6 +60,7 @@ public class PaperScan : MonoBehaviour
             detector.OnMarkerFound -= OnFound;
             detector.OnMarkerLost -= OnLost;
             detector.OnTextureExported -= OnExported;
+            detector.OnTextureCaptured -= OnTextureCaptured;
         }
         if (sessionController != null)
         {
@@ -73,10 +81,21 @@ public class PaperScan : MonoBehaviour
     void OnLost(int id) => markerPresenter?.OnMarkerLost(id);
     void OnExported(string _) => sessionController?.NotifyExportComplete();
 
+    void OnTextureCaptured(Texture2D tex)
+    {
+        if (_lastCapturedTexture != null)
+            Destroy(_lastCapturedTexture);
+        _lastCapturedTexture = tex;
+    }
+
     // Controller → Presentation
     void OnStarted() => ScanLanternManager.Instance?.OnScanningLanternTexture();
     void OnExportReq() => detector?.RequestExport();
-    void OnSuccess() => ScanLanternManager.Instance?.OnScanningSuccess();
+    void OnSuccess()
+    {
+        ScanLanternManager.Instance?.OnScanningSuccess(_lastCapturedTexture);
+        _lastCapturedTexture = null; // ownership transferred
+    }
 
     void OnReset()
     {

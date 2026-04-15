@@ -14,7 +14,9 @@ namespace HoiAnLantern
         private Material[] _instancedMaterials;
 
         /// <summary>
-        /// Apply a single texture to all faces. Destroys previous instanced materials.
+        /// Apply a single texture to all faces.
+        /// Reuses existing instanced material when possible (just swaps texture).
+        /// Falls back to creating new material if base was changed externally.
         /// </summary>
         public void ApplyTexture(Texture2D tex)
         {
@@ -28,7 +30,14 @@ namespace HoiAnLantern
                 Renderer rend = faces[i].GetComponent<Renderer>();
                 if (rend == null) continue;
 
-                // Destroy previous instanced material to prevent leak
+                // Fast path: if our instanced material is still active, just swap texture
+                if (_instancedMaterials[i] != null && rend.sharedMaterial == _instancedMaterials[i])
+                {
+                    _instancedMaterials[i].mainTexture = tex;
+                    continue;
+                }
+
+                // Slow path: material was changed externally (e.g. ApplyRandomMaterial) — recreate
                 if (_instancedMaterials[i] != null)
                     Destroy(_instancedMaterials[i]);
 

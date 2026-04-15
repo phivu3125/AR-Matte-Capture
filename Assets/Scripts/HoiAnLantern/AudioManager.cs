@@ -21,7 +21,9 @@ public class AudioManager : MonoBehaviour
         if (Instance == null)
         {
             Instance = this;
-            DontDestroyOnLoad(gameObject);
+            // DontDestroyOnLoad requires a root GameObject
+            if (transform.parent == null)
+                DontDestroyOnLoad(gameObject);
             InitAudioManager();
         }
         else

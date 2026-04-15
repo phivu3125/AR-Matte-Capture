@@ -24,6 +24,7 @@ public class MarkerBorder : MonoBehaviour
     IEnumerator gradientColor(Color color, bool gradientBack = true)
     {
         if (_renderer == null) yield break;
+        if (!_renderer.material.HasProperty("_Color")) yield break;
         Color initialColor = _renderer.material.color;
         float duration = MarkerManager.instance.GetGradientDuration(); // duration of the gradient
         float elapsed = 0f;
@@ -50,12 +51,14 @@ public class MarkerBorder : MonoBehaviour
 
     public void SetDetected()
     {
+        if (!gameObject.activeInHierarchy) return;
         if (currentCoroutine != null) StopCoroutine(currentCoroutine);
         currentCoroutine = StartCoroutine(gradientColor(colorWhenDetected, false));
     }
     
     public void SetMissing()
     {
+        if (!gameObject.activeInHierarchy) return;
         if (currentCoroutine != null) StopCoroutine(currentCoroutine);
         currentCoroutine = StartCoroutine(gradientColor(colorWhenMissing, true));
     }

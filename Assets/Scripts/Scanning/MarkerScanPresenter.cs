@@ -66,12 +66,16 @@ namespace ARMatteCapture.Scanning
         public void OnMarkerFound(int markerId)
         {
             if (markerId < 0 || markerId >= markerCount) return;
+            if (markers == null) return;
             if (markerFound[markerId]) return; // already shown as found
 
             markerFound[markerId] = true;
 
             if (markers[markerId] != null && detectedTextures != null && markerId < detectedTextures.Length)
-                markers[markerId].GetComponent<Renderer>().material.mainTexture = detectedTextures[markerId];
+            {
+                Renderer rend = markers[markerId].GetComponent<Renderer>();
+                if (rend != null) rend.material.mainTexture = detectedTextures[markerId];
+            }
 
             if (borders[markerId] != null)
                 borders[markerId].SetDetected();
@@ -84,12 +88,16 @@ namespace ARMatteCapture.Scanning
         public void OnMarkerLost(int markerId)
         {
             if (markerId < 0 || markerId >= markerCount) return;
+            if (markers == null) return;
             if (!markerFound[markerId]) return; // already shown as missing
 
             markerFound[markerId] = false;
 
             if (markers[markerId] != null && missingTextures != null && markerId < missingTextures.Length)
-                markers[markerId].GetComponent<Renderer>().material.mainTexture = missingTextures[markerId];
+            {
+                Renderer rend = markers[markerId].GetComponent<Renderer>();
+                if (rend != null) rend.material.mainTexture = missingTextures[markerId];
+            }
 
             if (borders[markerId] != null)
                 borders[markerId].SetMissing();

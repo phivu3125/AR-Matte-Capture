@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using ARMatteCapture.Webcam;
 using Unity.InferenceEngine;
 using UnityEngine;
 using UnityEngine.UI;
@@ -33,6 +35,13 @@ public class RVMCore : MonoBehaviour
 
     [Tooltip("Backend for model inference (GPU recommended, CPU for compatibility)")]
     public BackendMode backendMode = BackendMode.GPU;
+
+    [Header("Model Config (StreamingAssets)")]
+    [Tooltip("Available ONNX models. Looked up by asset name from rvm-config.json at startup.")]
+    public ModelAsset[] availableModels;
+
+    [Tooltip("Filename under StreamingAssets. Leave empty to skip config loading and use Inspector values.")]
+    public string configFileName = "rvm-config.json";
 
     [Header("Compute Shader")]
     [Tooltip("RVM Composite compute shader")]
@@ -78,6 +87,10 @@ public class RVMCore : MonoBehaviour
     [Tooltip("Mirror camera horizontally (selfie/mirror effect)")]
     public bool mirrorCamera = false;
 
+    [Header("External Webcam Source")]
+    [Tooltip("External WebcamSource to use instead of internal webcam. If assigned, webcam settings above are ignored.")]
+    public WebcamSource webcamSource;
+
     [Header("Performance")]
     [Range(1, 5)] public int processEveryNFrames = 1;
     #endregion
@@ -100,11 +113,9 @@ public class RVMCore : MonoBehaviour
     private RenderTexture phaRT;
     private RenderTexture morphTempRT;
     private RenderTexture compositeRT;
-    private Texture2D phaTexture2D;
-    private float[] cachedPixelArray;
 
     // Recurrent states
-    private Tensor<float> r1, r2, r3, r4;
+    private Tensor r1, r2, r3, r4;
     private int lastHeight = -1, lastWidth = -1;
     private float lastDsRatio = -1f;
 
@@ -142,6 +153,7 @@ public class RVMCore : MonoBehaviour
     private int modelWidth, modelHeight;
     private int frameCount;
     private bool isProcessing, isShuttingDown, isCleanedUp;
+    
     #endregion
 
     #region Constants
@@ -152,6 +164,7 @@ public class RVMCore : MonoBehaviour
     #region Unity Lifecycle
     void Start()
     {
+        LoadConfigFromStreamingAssets();
         if (!InitializeModel()) { enabled = false; return; }
         InitializeComputeShader();
         InitializeInputSource();
@@ -176,6 +189,80 @@ public class RVMCore : MonoBehaviour
     #endregion
 
     #region Initialization
+    [Serializable]
+    private class RVMConfig
+    {
+        public string modelName;   // asset name, e.g. "rvm_mobilenetv3_fp16"
+        public string modelType;   // "MobileNetV3" or "ResNet50"
+        public string backend;     // "GPU" or "CPU"
+    }
+
+    private void LoadConfigFromStreamingAssets()
+    {
+        if (string.IsNullOrEmpty(configFileName)) return;
+
+        string path = Path.Combine(Application.streamingAssetsPath, configFileName);
+        if (!File.Exists(path))
+        {
+            Debug.Log($"[RVM] No config file at {path}, using Inspector values.");
+            return;
+        }
+
+        try
+        {
+            string json = File.ReadAllText(path);
+            var cfg = JsonUtility.FromJson<RVMConfig>(json);
+            if (cfg == null)
+            {
+                Debug.LogWarning("[RVM] Config file parsed as null, using Inspector values.");
+                return;
+            }
+
+            // Resolve model by asset name
+            if (!string.IsNullOrEmpty(cfg.modelName) && availableModels != null)
+            {
+                ModelAsset match = null;
+                for (int i = 0; i < availableModels.Length; i++)
+                {
+                    if (availableModels[i] != null && availableModels[i].name == cfg.modelName)
+                    {
+                        match = availableModels[i];
+                        break;
+                    }
+                }
+                if (match != null)
+                {
+                    modelAsset = match;
+                    Debug.Log($"[RVM] Config: model='{cfg.modelName}' resolved.");
+                }
+                else
+                {
+                    Debug.LogWarning($"[RVM] Config: model '{cfg.modelName}' not found in availableModels. Using Inspector asset.");
+                }
+            }
+
+            // Resolve backbone type
+            if (!string.IsNullOrEmpty(cfg.modelType) &&
+                Enum.TryParse<ModelType>(cfg.modelType, true, out var mt))
+            {
+                modelType = mt;
+            }
+
+            // Resolve backend
+            if (!string.IsNullOrEmpty(cfg.backend) &&
+                Enum.TryParse<BackendMode>(cfg.backend, true, out var be))
+            {
+                backendMode = be;
+            }
+
+            Debug.Log($"[RVM] Config applied: type={modelType}, backend={backendMode}");
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"[RVM] Failed to load config '{path}': {e.Message}");
+        }
+    }
+
     private bool InitializeModel()
     {
         if (modelAsset == null) { Debug.LogError("[RVM] Model asset not assigned!"); return false; }
@@ -255,6 +342,13 @@ public class RVMCore : MonoBehaviour
 
     private void InitializeWebcam()
     {
+        // If external source is provided, skip internal webcam creation
+        if (webcamSource != null)
+        {
+            Debug.Log($"[RVM] Using external WebcamSource: {webcamSource.DeviceName}");
+            return;
+        }
+
         if (WebCamTexture.devices.Length == 0)
         {
             Debug.LogError("[RVM] No webcam found!");
@@ -293,20 +387,34 @@ public class RVMCore : MonoBehaviour
     private bool IsInputReady()
     {
         if (inputSourceType == InputSourceType.Webcam)
+        {
+            if (webcamSource != null)
+                return webcamSource.IsPlaying && webcamSource.ActualWidth > 16;
             return webcam != null && webcam.isPlaying && webcam.width > 16;
+        }
         else
             return isVideoReady && videoPlayer != null && videoPlayer.isPlaying && videoRT != null;
     }
 
     private Texture GetInputTexture()
     {
-        return inputSourceType == InputSourceType.Webcam ? webcam : videoRT;
+        if (inputSourceType == InputSourceType.Webcam)
+        {
+            if (webcamSource != null)
+                return webcamSource.GetTexture();
+            return webcam;
+        }
+        return videoRT;
     }
 
     private (int width, int height) GetInputDimensions()
     {
         if (inputSourceType == InputSourceType.Webcam)
+        {
+            if (webcamSource != null)
+                return (webcamSource.ActualWidth, webcamSource.ActualHeight);
             return (webcam?.width ?? 0, webcam?.height ?? 0);
+        }
         else
             return (videoRT?.width ?? 0, videoRT?.height ?? 0);
     }
@@ -359,15 +467,8 @@ public class RVMCore : MonoBehaviour
         {
             ReleaseRT(ref phaRT);
             ReleaseRT(ref morphTempRT);
-            if (phaTexture2D != null) Destroy(phaTexture2D);
-
             phaRT = CreateRT(mw, mh, true, RenderTextureFormat.RFloat);
             morphTempRT = CreateRT(mw, mh, true, RenderTextureFormat.RFloat);
-            phaTexture2D = new Texture2D(mw, mh, TextureFormat.RFloat, false) { filterMode = FilterMode.Bilinear };
-
-            int size = mw * mh;
-            if (cachedPixelArray == null || cachedPixelArray.Length != size)
-                cachedPixelArray = new float[size];
         }
     }
     #endregion
@@ -433,12 +534,11 @@ public class RVMCore : MonoBehaviour
             // Update recurrent states
             UpdateRecurrentStates();
 
-            // Get alpha output and convert to texture
+            // Get alpha output directly to RenderTexture (GPU-only, no CPU readback)
             var phaOutput = worker.PeekOutput("pha") as Tensor<float>;
             if (phaOutput == null) { isProcessing = false; return; }
 
-            ConvertAlphaToTexture(phaOutput);
-            Graphics.Blit(phaTexture2D, phaRT);
+            TextureConverter.RenderToTexture(phaOutput, phaRT, new TextureTransform().SetTensorLayout(TensorLayout.NCHW));
 
             // Composite
             if (useComputeShader)
@@ -448,7 +548,7 @@ public class RVMCore : MonoBehaviour
         }
         catch (Exception e)
         {
-            if (!isShuttingDown) Debug.LogError($"[RVM] Error: {e.Message}");
+            if (!isShuttingDown) Debug.LogError($"[RVM] Error: {e}");
         }
         finally
         {
@@ -469,60 +569,12 @@ public class RVMCore : MonoBehaviour
 
     private void UpdateRecurrentStates()
     {
-        var r1Out = worker.PeekOutput("r1o") as Tensor<float>;
-        var r2Out = worker.PeekOutput("r2o") as Tensor<float>;
-        var r3Out = worker.PeekOutput("r3o") as Tensor<float>;
-        var r4Out = worker.PeekOutput("r4o") as Tensor<float>;
-
-        if (r1Out == null || r2Out == null || r3Out == null || r4Out == null) return;
-
-        // Store old references for disposal
-        var oldR1 = r1; var oldR2 = r2; var oldR3 = r3; var oldR4 = r4;
-
-        try
-        {
-            r1 = r1Out.ReadbackAndClone();
-            r2 = r2Out.ReadbackAndClone();
-            r3 = r3Out.ReadbackAndClone();
-            r4 = r4Out.ReadbackAndClone();
-        }
-        catch (Exception e)
-        {
-            Debug.LogError($"[RVM] Failed to update recurrent states: {e.Message}");
-            // Restore old states if clone failed
-            if (r1 == null) r1 = oldR1; else oldR1?.Dispose();
-            if (r2 == null) r2 = oldR2; else oldR2?.Dispose();
-            if (r3 == null) r3 = oldR3; else oldR3?.Dispose();
-            if (r4 == null) r4 = oldR4; else oldR4?.Dispose();
-            return;
-        }
-
-        // Dispose old tensors only after successful clone
-        oldR1?.Dispose(); oldR2?.Dispose(); oldR3?.Dispose(); oldR4?.Dispose();
-    }
-
-    private void ConvertAlphaToTexture(Tensor<float> tensor)
-    {
-        if (tensor == null || cachedPixelArray == null || phaTexture2D == null) return;
-
-        var shape = tensor.shape;
-        int h = shape[2], w = shape[3];
-        var data = tensor.DownloadToArray();
-
-        if (data == null || data.Length == 0) return;
-
-        for (int y = 0; y < h; y++)
-        {
-            for (int x = 0; x < w; x++)
-            {
-                int srcIdx = y * w + x;
-                int dstIdx = (h - 1 - y) * w + x; // Flip Y
-                cachedPixelArray[dstIdx] = Mathf.Clamp01(data[srcIdx]);
-            }
-        }
-
-        phaTexture2D.SetPixelData(cachedPixelArray, 0);
-        phaTexture2D.Apply();
+        // CopyOutput: GPU-only copy, no CPU readback.
+        // Handles disposal/reallocation internally if shape changes.
+        worker.CopyOutput("r1o", ref r1);
+        worker.CopyOutput("r2o", ref r2);
+        worker.CopyOutput("r3o", ref r3);
+        worker.CopyOutput("r4o", ref r4);
     }
     #endregion
 
@@ -592,10 +644,15 @@ public class RVMCore : MonoBehaviour
 
     private void DisposeRecurrentStates()
     {
-        r1?.Dispose(); r1 = null;
-        r2?.Dispose(); r2 = null;
-        r3?.Dispose(); r3 = null;
-        r4?.Dispose(); r4 = null;
+        // Null-first pattern: clear refs before dispose so early return in
+        // InitializeRecurrentStates (r1 != null check) never sees a stale ref
+        // even if Dispose() throws (e.g., tensor already freed by worker pool).
+        var a = r1; var b = r2; var c = r3; var d = r4;
+        r1 = null; r2 = null; r3 = null; r4 = null;
+        try { a?.Dispose(); } catch { }
+        try { b?.Dispose(); } catch { }
+        try { c?.Dispose(); } catch { }
+        try { d?.Dispose(); } catch { }
     }
     #endregion
 
@@ -613,7 +670,11 @@ public class RVMCore : MonoBehaviour
 
         if (dilatePixels > 0)
         {
-            if (erodePixels > 0) Graphics.Blit(morphTempRT, phaRT);
+            if (erodePixels > 0)
+            {
+                Graphics.Blit(morphTempRT, phaRT);
+                currentMask = phaRT; // Read from phaRT (blitted erode result), not morphTempRT
+            }
             ApplyMorphology(currentMask, morphTempRT, dilatePixels, true);
             currentMask = morphTempRT;
         }
@@ -696,6 +757,8 @@ public class RVMCore : MonoBehaviour
     /// </summary>
     public WebCamTexture GetWebCamTexture()
     {
+        if (webcamSource != null)
+            return webcamSource.GetTexture();
         return webcam;
     }
 
@@ -730,7 +793,8 @@ public class RVMCore : MonoBehaviour
 
     private void StopInputSource()
     {
-        if (webcam != null) { webcam.Stop(); Destroy(webcam); webcam = null; }
+        // Don't destroy external webcam source - it manages its own lifecycle
+        if (webcamSource == null && webcam != null) { webcam.Stop(); Destroy(webcam); webcam = null; }
         if (videoPlayer != null) { videoPlayer.Stop(); Destroy(videoPlayer); videoPlayer = null; }
         ReleaseRT(ref videoRT);
         isVideoReady = false;
@@ -756,8 +820,6 @@ public class RVMCore : MonoBehaviour
         ReleaseRT(ref phaRT);
         ReleaseRT(ref morphTempRT);
         ReleaseRT(ref compositeRT);
-        if (phaTexture2D != null) { Destroy(phaTexture2D); phaTexture2D = null; }
-        cachedPixelArray = null;
     }
     #endregion
 }

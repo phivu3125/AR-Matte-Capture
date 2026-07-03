@@ -89,10 +89,3 @@ AGENTS.md
 
 .beads/
 
-# BiRefNet Python Tool
-Tools/BiRefNetBuilder/.venv/
-Tools/BiRefNetBuilder/build/
-Tools/BiRefNetBuilder/models/
-
-# BiRefNet bundled executable (rebuild from Tools/BiRefNetBuilder/)
-Assets/StreamingAssets/BiRefNet/dist/

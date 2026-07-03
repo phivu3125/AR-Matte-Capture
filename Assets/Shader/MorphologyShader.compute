@@ -1,0 +1,67 @@
+#pragma kernel Erode
+#pragma kernel Dilate
+
+Texture2D<float4> _InputTex;
+RWTexture2D<float4> _Result;
+int _Width;
+int _Height;
+
+// ===== EROSION (shrink mask) =====
+[numthreads(8,8,1)]
+void Erode(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)_Width || id.y >= (uint)_Height)
+        return;
+
+    // Check 3x3 neighborhood
+    float minAlpha = 1.0;
+    
+    for (int dy = -1; dy <= 1; dy++)
+    {
+        for (int dx = -1; dx <= 1; dx++)
+        {
+            int nx = (int)id.x + dx;
+            int ny = (int)id.y + dy;
+            
+            // Clamp to bounds
+            nx = clamp(nx, 0, _Width - 1);
+            ny = clamp(ny, 0, _Height - 1);
+            
+            float alpha = _InputTex[int2(nx, ny)].a;
+            minAlpha = min(minAlpha, alpha);
+        }
+    }
+    
+    float4 color = _InputTex[id.xy];
+    _Result[id.xy] = float4(color.rgb, minAlpha);
+}
+
+// ===== DILATION (expand mask) =====
+[numthreads(8,8,1)]
+void Dilate(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)_Width || id.y >= (uint)_Height)
+        return;
+
+    // Check 3x3 neighborhood
+    float maxAlpha = 0.0;
+    
+    for (int dy = -1; dy <= 1; dy++)
+    {
+        for (int dx = -1; dx <= 1; dx++)
+        {
+            int nx = (int)id.x + dx;
+            int ny = (int)id.y + dy;
+            
+            // Clamp to bounds
+            nx = clamp(nx, 0, _Width - 1);
+            ny = clamp(ny, 0, _Height - 1);
+            
+            float alpha = _InputTex[int2(nx, ny)].a;
+            maxAlpha = max(maxAlpha, alpha);
+        }
+    }
+    
+    float4 color = _InputTex[id.xy];
+    _Result[id.xy] = float4(color.rgb, maxAlpha);
+}

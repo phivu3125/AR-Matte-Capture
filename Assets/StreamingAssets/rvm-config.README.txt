@@ -1,0 +1,90 @@
+RVM Config - Hướng dẫn chỉnh rvm-config.json
+================================================
+
+File này điều khiển model matting mà RVMCore load khi khởi động.
+Sửa rvm-config.json rồi chạy lại app (hoặc Play Mode trong Editor).
+
+LƯU Ý: JSON KHÔNG hỗ trợ comment. KHÔNG thêm // hay /* */ vào
+rvm-config.json, nếu không JsonUtility sẽ parse lỗi và fallback
+về giá trị gán trong Inspector của RVMCore.
+
+----------------------------------------------------------------
+Schema
+----------------------------------------------------------------
+
+{
+  "modelName": "<tên asset ONNX, không có .onnx>",
+  "modelType": "<MobileNetV3 | ResNet50>",
+  "backend":   "<GPU | CPU>"
+}
+
+----------------------------------------------------------------
+modelName
+----------------------------------------------------------------
+Tên asset ONNX (KHÔNG có đuôi .onnx) phải khớp 1 trong số các
+ModelAsset được kéo vào mảng "Available Models" của RVMCore
+trong Inspector.
+
+Các model có sẵn ở Assets/RVM Models/:
+  - rvm_mobilenetv3_fp16   (nhẹ, nhanh, VRAM thấp - mặc định)
+  - rvm_mobilenetv3_fp32   (nhẹ, chính xác hơn fp16 một chút)
+  - rvm_resnet50_fp16      (nặng, chất lượng cao, cần GPU khỏe)
+  - rvm_resnet50_fp32      (nặng nhất, chính xác nhất)
+
+Nếu modelName không khớp tên nào trong Available Models, log sẽ
+cảnh báo và giữ nguyên modelAsset đang gán ở Inspector.
+
+----------------------------------------------------------------
+modelType
+----------------------------------------------------------------
+Phải KHỚP với backbone của model đã chọn, nếu không shape tensor
+sẽ không tương thích và worker crash.
+
+  - "MobileNetV3"  -> dùng cho rvm_mobilenetv3_*
+  - "ResNet50"     -> dùng cho rvm_resnet50_*
+
+Không phân biệt hoa/thường ("mobilenetv3" cũng được).
+
+----------------------------------------------------------------
+backend
+----------------------------------------------------------------
+Nơi inference chạy.
+
+  - "GPU"  -> nhanh, mặc định, cần GPU hỗ trợ compute.
+  - "CPU"  -> fallback khi GPU không khả dụng; chậm hơn nhiều.
+
+Không phân biệt hoa/thường.
+
+----------------------------------------------------------------
+Ví dụ
+----------------------------------------------------------------
+
+Mặc định (nhẹ, nhanh):
+{
+  "modelName": "rvm_mobilenetv3_fp16",
+  "modelType": "MobileNetV3",
+  "backend": "GPU"
+}
+
+Chất lượng cao:
+{
+  "modelName": "rvm_resnet50_fp16",
+  "modelType": "ResNet50",
+  "backend": "GPU"
+}
+
+Máy không có GPU khỏe:
+{
+  "modelName": "rvm_mobilenetv3_fp32",
+  "modelType": "MobileNetV3",
+  "backend": "CPU"
+}
+
+----------------------------------------------------------------
+Sau khi build
+----------------------------------------------------------------
+File rvm-config.json nằm trong:
+  <TenBuild>_Data/StreamingAssets/rvm-config.json
+
+Sửa trực tiếp file này, không cần build lại. Chỉ cần khởi động
+lại app để RVMCore đọc lại config.

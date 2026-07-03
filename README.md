@@ -1,6 +1,6 @@
 # AR Matte Capture
 
-Real-time background removal and AR marker tracking in Unity, powered by neural-network video matting (RVM), ArUco marker detection (OpenCV), and high-quality still-image segmentation (BiRefNet).
+Real-time background removal and AR marker tracking in Unity, powered by neural-network video matting (RVM) and ArUco marker detection (OpenCV).
 
 ## Use Case
 
@@ -8,17 +8,15 @@ Camera-composited AR/MR — not VR. A physical webcam feed is processed in real 
 
 1. **RVM** removes the background from the live video, producing a clean foreground matte displayed on a Canvas `RawImage`.
 2. **ArUco tracking** detects printed markers in the same camera feed and positions 3D objects in the scene to match marker locations, enabling interaction between virtual objects and the physical environment.
-3. **BiRefNet** (on-demand) captures a single high-quality still frame, removes its background with a heavier segmentation model, composites the result onto a rendered scene background, and saves the final image to disk.
 
 ## Tech Stack
 
-| Component | Version | Notes |
-|---|---|---|
-| Unity | 6000.0.60f1 (Unity 6) | |
-| Render Pipeline | URP 17.2.0 | Universal Render Pipeline |
-| Unity Sentis | 2.3.0 (`com.unity.ai.inference`) | ONNX model inference on GPU/CPU |
-| OpenCV for Unity | 4.5.5 (Enox Software) | Unity asset wrapping OpenCV 4.5.5 C++ |
-| BiRefNet | ZhengPeng7/BiRefNet (HuggingFace) | Bundled as standalone `.exe` via PyInstaller |
+| Component        | Version                          | Notes                                 |
+| ---------------- | -------------------------------- | ------------------------------------- |
+| Unity            | 6000.0.60f1 (Unity 6)            |                                       |
+| Render Pipeline  | URP 17.2.0                       | Universal Render Pipeline             |
+| Unity Sentis     | 2.3.0 (`com.unity.ai.inference`) | ONNX model inference on GPU/CPU       |
+| OpenCV for Unity | 4.5.5 (Enox Software)            | Unity asset wrapping OpenCV 4.5.5 C++ |
 
 ## Project Structure
 
@@ -31,23 +29,10 @@ Assets/
 │   └── rvm_resnet50_fp32.onnx
 ├── Scripts/
 │   ├── RVMCore.cs                     # Real-time video matting pipeline
-│   ├── ArucoMarkerTracker.cs          # ArUco marker detection & tracking
-│   ├── BiRefNetCapture.cs             # BiRefNet external process wrapper
-│   └── BiRefNetCaptureController.cs   # Capture orchestrator & compositor
+│   └── ArucoMarkerTracker.cs          # ArUco marker detection & tracking
 ├── Scenes/
 │   └── Demo.unity                     # Main scene
-├── StreamingAssets/
-│   └── BiRefNet/
-│       ├── dist/birefnet_infer/
-│       │   └── birefnet_infer.exe     # Bundled inference executable
-│       └── Captures/                  # Output folder for saved images
 └── OpenCVForUnity/                    # OpenCV 4.5.5 Unity plugin (Enox Software)
-
-Tools/
-└── BiRefNetBuilder/                   # Python source & PyInstaller build scripts
-    ├── birefnet_infer.py              # Inference script (source)
-    ├── build.bat                      # PyInstaller build command
-    └── models/                        # Cached HuggingFace model weights
 ```
 
 ## How It Works
@@ -77,43 +62,6 @@ Tools/
 - **Smoothing**: `Vector3.SmoothDamp` runs every `Update()` frame (decoupled from detection rate) to interpolate the 3D object toward the latest detected position, ensuring smooth motion regardless of detection frame rate.
 - **Frame skip**: `processEveryNFrames` throttle for additional control.
 
-### 3. BiRefNet Screenshot Capture
-
-BiRefNet provides on-demand high-quality background removal for still images. Unlike RVM (which is optimized for real-time video), BiRefNet produces precise edge segmentation suitable for print-quality output.
-
-#### Capture Flow (step by step)
-
-When the user presses **Space**:
-
-1. **`BiRefNetCaptureController.StartCapture()`** is called.
-
-2. **Source frame acquisition**: The controller reads the current camera frame from `rvmCore.GetSourceTexture()` (the raw, un-composited webcam `RenderTexture`). It creates a temporary `RenderTexture` with sRGB color space and blits the source into it to ensure correct color handling.
-
-3. **Scene background capture**: While BiRefNet is processing (which takes several seconds), the controller separately renders the Unity scene background. A dedicated `sceneCamera` (excluding the video layer) renders into a `RenderTexture`, which is then read into a `Texture2D`. This captures whatever virtual environment is behind the video feed — skyboxes, 3D objects, lighting, etc.
-
-4. **BiRefNet inference (external process)**:
-   - `BiRefNetCapture` saves the source frame as a temporary PNG file on disk.
-   - It launches `birefnet_infer.exe` (located at `StreamingAssets/BiRefNet/dist/birefnet_infer/`) as a child process with arguments: input path, output path, `--size` (default 1024), and optionally `--fp16`.
-   - The executable loads the `ZhengPeng7/BiRefNet` model from its bundled weights, runs inference on the input image, generates an alpha matte, applies it to produce a transparent-background PNG, and writes the result to the output path.
-   - The controller monitors the process with a configurable timeout (default 120 seconds) and retry logic (default 3 attempts).
-   - Exit codes: `0` = success, `1` = general error, `2` = no GPU available, `3` = input not found, `4` = model load failed, `5` = inference failed.
-
-5. **Result loading**: Once the process completes successfully, `BiRefNetCapture` loads the output PNG back into a `Texture2D` (with alpha channel) and fires the `OnCaptureComplete` event.
-
-6. **Compositing**: `BiRefNetCaptureController.CompositeResult()` takes the BiRefNet foreground (transparent background) and the scene background captured in step 3. It uses GL alpha blending to composite the foreground onto the background, producing the final image — the user with a precisely-removed background placed over the rendered 3D scene.
-
-7. **Saving**: The final composited image is saved as a PNG to `Assets/StreamingAssets/BiRefNet/Captures/` with a timestamped filename. The `OnCaptureComplete(Texture2D)` event is also fired for any listeners that want to display or further process the result.
-
-#### Why Two Models?
-
-| | RVM | BiRefNet |
-|---|---|---|
-| **Purpose** | Real-time video matting | Single-frame segmentation |
-| **Speed** | ~30 fps (GPU-accelerated) | ~5-15 seconds per frame |
-| **Quality** | Good for video (temporal consistency) | Excellent edge precision |
-| **Runs in** | Unity Sentis (in-process) | External Python exe (out-of-process) |
-| **Use case** | Live preview & AR tracking | Final capture / screenshot |
-
 ## Getting Started
 
 ### Prerequisites
@@ -121,7 +69,7 @@ When the user presses **Space**:
 - Unity 6 (6000.0.60f1 or compatible)
 - [OpenCV for Unity](https://assetstore.unity.com/packages/tools/integration/opencv-for-unity-21088) (Enox Software, v2.6.0+)
 - A webcam
-- NVIDIA GPU recommended (for Sentis GPU backend and BiRefNet inference)
+- NVIDIA GPU recommended (for Sentis GPU backend)
 
 ### Setup
 
@@ -131,66 +79,40 @@ When the user presses **Space**:
 4. Open `Assets/Scenes/Demo.unity`.
 5. Press Play.
 
-### BiRefNet Setup
-
-The bundled `birefnet_infer.exe` should work out of the box on Windows with an NVIDIA GPU. If you need to rebuild it:
-
-```bash
-cd Tools/BiRefNetBuilder
-# Create/activate Python venv
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-# Build standalone exe
-build.bat
-```
-
-The built executable and model weights are placed in `Assets/StreamingAssets/BiRefNet/dist/birefnet_infer/`.
-
 ## Configuration
 
 All components are configured via the Unity Inspector on their respective GameObjects in the Demo scene.
 
 ### RVMCore
 
-| Field | Default | Description |
-|---|---|---|
-| Model Type | MobileNetV3 | MobileNetV3 (fast) or ResNet50 (quality) |
-| Use FP16 Model | true | Half-precision for faster inference |
-| Backend Mode | GPU | GPU compute or CPU fallback |
-| Process Every N Frames | 1 | Frame skip (1 = every frame) |
-| Webcam Resolution | 1920x1080 | Requested webcam resolution |
-| Webcam FPS | 30 | Requested frame rate |
-| Mirror Camera | true | Flip horizontally for selfie view |
-| Mask Threshold | 0.5 | Alpha cutoff |
-| Mask Feather | 0.02 | Edge softness |
+| Field                  | Default     | Description                              |
+| ---------------------- | ----------- | ---------------------------------------- |
+| Model Type             | MobileNetV3 | MobileNetV3 (fast) or ResNet50 (quality) |
+| Use FP16 Model         | true        | Half-precision for faster inference      |
+| Backend Mode           | GPU         | GPU compute or CPU fallback              |
+| Process Every N Frames | 1           | Frame skip (1 = every frame)             |
+| Webcam Resolution      | 1920x1080   | Requested webcam resolution              |
+| Webcam FPS             | 30          | Requested frame rate                     |
+| Mirror Camera          | true        | Flip horizontally for selfie view        |
+| Mask Threshold         | 0.5         | Alpha cutoff                             |
+| Mask Feather           | 0.02        | Edge softness                            |
 
 ### ArucoMarkerTracker
 
-| Field | Default | Description |
-|---|---|---|
-| Dictionary ID | DICT_4X4_50 | ArUco dictionary type |
-| Target Marker ID | 0 | Which marker ID to track |
-| Detection Width | 320 | Low-res detection width (0 = full-res) |
-| Detection Height | 240 | Low-res detection height (0 = full-res) |
-| Process Every N Frames | 1 | Frame skip |
-| Smooth Time | 0.05 | SmoothDamp duration (seconds) |
-| Depth Offset | 0 | Z-axis offset for tracked object |
-
-### BiRefNetCapture
-
-| Field | Default | Description |
-|---|---|---|
-| Processing Size | 1024 | Input resolution for BiRefNet |
-| Use FP16 | true | Half-precision inference |
-| Timeout Seconds | 120 | Max wait time per attempt |
-| Retry Attempts | 3 | Number of retries on failure |
+| Field                  | Default     | Description                             |
+| ---------------------- | ----------- | --------------------------------------- |
+| Dictionary ID          | DICT_4X4_50 | ArUco dictionary type                   |
+| Target Marker ID       | 0           | Which marker ID to track                |
+| Detection Width        | 320         | Low-res detection width (0 = full-res)  |
+| Detection Height       | 240         | Low-res detection height (0 = full-res) |
+| Process Every N Frames | 1           | Frame skip                              |
+| Smooth Time            | 0.05        | SmoothDamp duration (seconds)           |
+| Depth Offset           | 0           | Z-axis offset for tracked object        |
 
 ## License
 
 This project uses third-party assets and models under their respective licenses:
 
 - **RVM (Robust Video Matting)**: [Apache 2.0](https://github.com/PeterL1n/RobustVideoMatting)
-- **BiRefNet**: [MIT](https://github.com/ZhengPeng7/BiRefNet)
 - **OpenCV**: [Apache 2.0](https://opencv.org/license/)
 - **OpenCV for Unity**: Commercial license (Enox Software)

@@ -5,6 +5,7 @@ using OpenCVForUnity.ArucoModule;
 using OpenCVForUnity.ImgprocModule;
 using OpenCVForUnity.UnityUtils;
 using System.Collections.Generic;
+using ARMatteCapture.Webcam;
 
 using ArucoDictionary = OpenCVForUnity.ArucoModule.Dictionary;
 
@@ -49,6 +50,9 @@ public class ArucoMarkerTracker : MonoBehaviour
     [Tooltip("RVMCore providing the raw WebCamTexture via GetWebCamTexture()")]
     [SerializeField] private RVMCore rvmCore;
 
+    [Tooltip("Optional: Direct WebcamSource. When assigned, reads from this instead of rvmCore.GetWebCamTexture()")]
+    [SerializeField] private WebcamSource webcamSource;
+
     [Tooltip("The 3D object that appears at the marker position on the video surface")]
     [SerializeField] private Transform targetObject;
 
@@ -64,6 +68,13 @@ public class ArucoMarkerTracker : MonoBehaviour
 
     [Tooltip("ID of the marker to track (others are ignored)")]
     [SerializeField] private int targetMarkerId = 0;
+
+    [Header("Multi-Marker")]
+    [Tooltip("Enable multi-marker tracking mode (for HoiAnLantern 4-marker scan)")]
+    [SerializeField] private bool enableMultiMarker = false;
+
+    [Tooltip("Marker IDs to track when multi-marker is enabled")]
+    [SerializeField] private int[] trackedMarkerIds = new int[0];
 
     [Header("Performance")]
     [Tooltip("Process detection every N frames (1 = every frame)")]
@@ -129,6 +140,118 @@ public class ArucoMarkerTracker : MonoBehaviour
     private int framesWithoutMarker;
     private const int HIDE_AFTER_FRAMES = 15;
     private readonly Vector3[] canvasWorldCorners = new Vector3[4]; // cached to avoid GC alloc
+    private bool isPaused; // pause flag for external control
+
+    // Multi-marker tracking state
+    private class TrackedMarkerData
+    {
+        public Vector3 latestPosition;
+        public Vector2 latestPixelCenter; // pixel-space center in detection resolution
+        public Vector3 smoothVelocity;
+        public bool isDetected;
+        public int framesWithoutDetection;
+    }
+    private Dictionary<int, TrackedMarkerData> multiMarkerStates;
+    private HashSet<int> trackedIdSet; // fast lookup for tracked IDs
+
+    #endregion
+
+    #region Public API (used by HoiAnLantern gameplay scripts)
+
+    /// <summary>
+    /// Fired when a tracked marker is first detected.
+    /// Parameter: marker ID.
+    /// </summary>
+    public event System.Action<int> OnMarkerDetected;
+
+    /// <summary>
+    /// Fired when a tracked marker is lost (after grace period).
+    /// Parameter: marker ID.
+    /// </summary>
+    public event System.Action<int> OnMarkerLostEvent;
+
+    /// <summary>
+    /// Whether the tracker is actively detecting and tracking a marker.
+    /// Can be set externally to enable/disable tracking.
+    /// </summary>
+    public bool IsTracking
+    {
+        get => hasDetectedOnce && !isPaused;
+        set
+        {
+            if (!value)
+            {
+                hasDetectedOnce = false;
+                if (targetObject != null)
+                    targetObject.gameObject.SetActive(false);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Pauses the detection pipeline without destroying state.
+    /// Call ResumeDetection() to continue.
+    /// </summary>
+    public void PauseDetection()
+    {
+        isPaused = true;
+    }
+
+    /// <summary>
+    /// Resumes the detection pipeline after PauseDetection().
+    /// </summary>
+    public void ResumeDetection()
+    {
+        isPaused = false;
+    }
+
+    /// <summary>
+    /// Whether a specific marker is currently detected (multi-marker mode).
+    /// </summary>
+    public bool IsMarkerDetected(int markerId)
+    {
+        if (multiMarkerStates == null) return false;
+        return multiMarkerStates.TryGetValue(markerId, out var data) && data.isDetected;
+    }
+
+    /// <summary>
+    /// Gets the world position of a tracked marker (multi-marker mode).
+    /// Returns Vector3.zero if not detected.
+    /// </summary>
+    public Vector3 GetMarkerWorldPosition(int markerId)
+    {
+        if (multiMarkerStates == null) return Vector3.zero;
+        return multiMarkerStates.TryGetValue(markerId, out var data) ? data.latestPosition : Vector3.zero;
+    }
+
+    /// <summary>
+    /// Gets the pixel-space center of a tracked marker in detection resolution.
+    /// Used by PaperScan for perspective warp source points.
+    /// Returns Vector2.zero if not detected.
+    /// </summary>
+    public Vector2 GetMarkerPixelCenter(int markerId)
+    {
+        if (multiMarkerStates == null) return Vector2.zero;
+        return multiMarkerStates.TryGetValue(markerId, out var data) && data.isDetected
+            ? data.latestPixelCenter
+            : Vector2.zero;
+    }
+
+    /// <summary>
+    /// Gets the current detection resolution width.
+    /// Used by PaperScan to know the coordinate space of pixel centers.
+    /// </summary>
+    public int DetectionWidth => imageWidth;
+
+    /// <summary>
+    /// Gets the current detection resolution height.
+    /// </summary>
+    public int DetectionHeight => imageHeight;
+
+    /// <summary>
+    /// Whether multi-marker tracking is enabled.
+    /// </summary>
+    public bool IsMultiMarkerEnabled => enableMultiMarker;
 
     #endregion
 
@@ -141,10 +264,20 @@ public class ArucoMarkerTracker : MonoBehaviour
 
     void Update()
     {
-        if (rvmCore == null || targetObject == null || videoDisplay == null) return;
+        if (targetObject == null || videoDisplay == null) return;
+        if (isPaused) return; // External pause control
 
-        // Get raw WebCamTexture for direct CPU pixel access (bypasses GPU round-trip)
-        WebCamTexture webcam = rvmCore.GetWebCamTexture();
+        // Get raw WebCamTexture: prefer direct WebcamSource, fall back to rvmCore
+        WebCamTexture webcam = null;
+        if (webcamSource != null)
+        {
+            webcam = webcamSource.GetTexture();
+        }
+        else if (rvmCore != null)
+        {
+            webcam = rvmCore.GetWebCamTexture();
+        }
+
         if (webcam == null || !webcam.isPlaying || webcam.width <= 16) return;
 
         if (!isInitialized)
@@ -247,6 +380,19 @@ public class ArucoMarkerTracker : MonoBehaviour
             ? $"{effectiveDetW}x{effectiveDetH} (full resolution)"
             : $"{effectiveDetW}x{effectiveDetH} (downscaled from {camWidth}x{camHeight})";
         Debug.Log($"[ArUco] Initialized: {resInfo}, dict={(DictionaryId)dictionaryId}, marker={markerLength}m, target ID={targetMarkerId}, direct WebCamTexture read");
+
+        // Initialize multi-marker state if enabled
+        if (enableMultiMarker && trackedMarkerIds != null && trackedMarkerIds.Length > 0)
+        {
+            multiMarkerStates = new Dictionary<int, TrackedMarkerData>();
+            trackedIdSet = new HashSet<int>();
+            foreach (int id in trackedMarkerIds)
+            {
+                multiMarkerStates[id] = new TrackedMarkerData();
+                trackedIdSet.Add(id);
+            }
+            Debug.Log($"[ArUco] Multi-marker enabled: tracking {trackedMarkerIds.Length} markers ({string.Join(",", trackedMarkerIds)})");
+        }
     }
 
     #endregion
@@ -295,7 +441,11 @@ public class ArucoMarkerTracker : MonoBehaviour
         // Step 2: WebCamTexture provides the raw un-mirrored frame.
         // No need to flip for detection — the image is already in its original orientation.
         // The isMirrored flag is only used for UV mapping (display shows mirrored video).
-        bool isMirrored = rvmCore != null && rvmCore.mirrorCamera;
+        bool isMirrored;
+        if (webcamSource != null)
+            isMirrored = webcamSource.MirrorHorizontal;
+        else
+            isMirrored = rvmCore != null && rvmCore.mirrorCamera;
 
         // Step 3: Dispose previous frame's corner Mats, then detect
         DisposeCornersAndRejected();
@@ -304,22 +454,160 @@ public class ArucoMarkerTracker : MonoBehaviour
         if (ids.total() <= 0)
         {
             OnMarkerLost();
+            if (enableMultiMarker) OnMultiMarkerLostAll();
             return;
         }
 
-        // Step 4: Find our target marker and map to canvas position
+        // Step 4a: Multi-marker mode — process all tracked markers
+        if (enableMultiMarker && multiMarkerStates != null)
+        {
+            ProcessMultiMarkerDetection(isMirrored);
+        }
+
+        // Step 4b: Single-marker mode — find target marker and map to canvas
+        bool foundSingleTarget = false;
         for (int i = 0; i < (int)ids.total(); i++)
         {
             int detectedId = (int)ids.get(i, 0)[0];
             if (detectedId == targetMarkerId)
             {
                 UpdateTargetPosition(i, isMirrored);
-                return;
+                foundSingleTarget = true;
+                break;
             }
         }
 
-        // Target marker not in detected set
-        OnMarkerLost();
+        if (!foundSingleTarget)
+        {
+            // Target marker not in detected set
+            OnMarkerLost();
+        }
+    }
+
+    /// <summary>
+    /// Processes all detected markers against the tracked set.
+    /// Fires OnMarkerDetected/OnMarkerLostEvent events for each marker state change.
+    /// </summary>
+    private void ProcessMultiMarkerDetection(bool isMirrored)
+    {
+        // Build set of detected IDs this frame
+        HashSet<int> detectedThisFrame = new HashSet<int>();
+        for (int i = 0; i < (int)ids.total(); i++)
+        {
+            int detectedId = (int)ids.get(i, 0)[0];
+            if (trackedIdSet.Contains(detectedId))
+            {
+                detectedThisFrame.Add(detectedId);
+
+                // Compute world position for this marker
+                Vector3 worldPos = ComputeMarkerWorldPosition(i, isMirrored);
+
+                // Compute pixel center from ArUco corners (detection resolution)
+                Mat cornerMat = corners[i];
+                float pcx = 0f, pcy = 0f;
+                for (int c = 0; c < 4; c++)
+                {
+                    double[] pt = cornerMat.get(0, c);
+                    pcx += (float)pt[0];
+                    pcy += (float)pt[1];
+                }
+                pcx /= 4f;
+                pcy /= 4f;
+
+                var data = multiMarkerStates[detectedId];
+                bool wasDetected = data.isDetected;
+                data.latestPosition = worldPos;
+                data.latestPixelCenter = new Vector2(pcx, pcy);
+                data.isDetected = true;
+                data.framesWithoutDetection = 0;
+
+                // Fire event on first detection (transition: lost -> found)
+                if (!wasDetected)
+                {
+                    if (showDebugLog)
+                        Debug.Log($"[ArUco] Multi-marker {detectedId} FOUND");
+                    OnMarkerDetected?.Invoke(detectedId);
+                }
+            }
+        }
+
+        // Handle markers NOT detected this frame
+        foreach (var kvp in multiMarkerStates)
+        {
+            if (!detectedThisFrame.Contains(kvp.Key))
+            {
+                var data = kvp.Value;
+                if (data.isDetected)
+                {
+                    data.framesWithoutDetection++;
+                    if (data.framesWithoutDetection >= HIDE_AFTER_FRAMES)
+                    {
+                        data.isDetected = false;
+                        if (showDebugLog)
+                            Debug.Log($"[ArUco] Multi-marker {kvp.Key} LOST");
+                        OnMarkerLostEvent?.Invoke(kvp.Key);
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Marks all multi-tracked markers as lost (when no markers detected at all).
+    /// </summary>
+    private void OnMultiMarkerLostAll()
+    {
+        if (multiMarkerStates == null) return;
+        foreach (var kvp in multiMarkerStates)
+        {
+            var data = kvp.Value;
+            if (data.isDetected)
+            {
+                data.framesWithoutDetection++;
+                if (data.framesWithoutDetection >= HIDE_AFTER_FRAMES)
+                {
+                    data.isDetected = false;
+                    OnMarkerLostEvent?.Invoke(kvp.Key);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Computes the world position of a detected marker on the canvas surface.
+    /// Shared between single-target and multi-marker modes.
+    /// </summary>
+    private Vector3 ComputeMarkerWorldPosition(int markerIndex, bool isMirrored)
+    {
+        Mat cornerMat = corners[markerIndex];
+
+        // Calculate 2D center (average of 4 corner points)
+        float cx = 0f, cy = 0f;
+        for (int i = 0; i < 4; i++)
+        {
+            double[] pt = cornerMat.get(0, i);
+            cx += (float)pt[0];
+            cy += (float)pt[1];
+        }
+        cx /= 4f;
+        cy /= 4f;
+
+        // Normalize to 0-1 range
+        float nx = cx / imageWidth;
+        float ny = cy / imageHeight;
+
+        if (isMirrored) nx = 1f - nx;
+
+        // Map to Canvas world position
+        videoDisplay.rectTransform.GetWorldCorners(canvasWorldCorners);
+        float u = nx;
+        float v = 1f - ny; // OpenCV Y=top, Unity Y=bottom
+
+        Vector3 bottomPos = Vector3.Lerp(canvasWorldCorners[0], canvasWorldCorners[3], u);
+        Vector3 topPos = Vector3.Lerp(canvasWorldCorners[1], canvasWorldCorners[2], u);
+        Vector3 canvasPos = Vector3.Lerp(bottomPos, topPos, v);
+
+        return canvasPos - videoDisplay.transform.forward * depthOffset;
     }
 
     /// <summary>
@@ -459,8 +747,8 @@ public class ArucoMarkerTracker : MonoBehaviour
     /// </summary>
     private void AutoWireReferences()
     {
-        // Auto-find RVMCore
-        if (rvmCore == null)
+        // Auto-find RVMCore only when direct WebcamSource is not assigned
+        if (webcamSource == null && rvmCore == null)
         {
             rvmCore = FindFirstObjectByType<RVMCore>();
             if (rvmCore != null)

@@ -26,6 +26,12 @@ public class PaperScan : MonoBehaviour
     /// </summary>
     private Texture2D _lastCapturedTexture;
 
+    /// <summary>
+    /// Prevents camera from moving multiple times if markers are lost and regained
+    /// within the same scan cycle.
+    /// </summary>
+    private bool _cameraMoved;
+
     void Awake()
     {
         if (instance == null) instance = this;
@@ -89,7 +95,7 @@ public class PaperScan : MonoBehaviour
     }
 
     // Controller → Presentation
-    void OnStarted() => ScanLanternManager.Instance?.OnScanningLanternTexture();
+    void OnStarted() { } // Camera no longer moves on first marker; waits for all markers
     void OnExportReq() => detector?.RequestExport();
     void OnSuccess()
     {
@@ -100,6 +106,7 @@ public class PaperScan : MonoBehaviour
     void OnReset()
     {
         isNewClientScan = true;
+        _cameraMoved = false;
         markerPresenter?.ResetAll();
     }
 
@@ -109,6 +116,13 @@ public class PaperScan : MonoBehaviour
             || newState == ScanState.AllMarkersDetected || newState == ScanState.Exporting;
         if (detector != null) detector.enabled = active;
         isNewClientScan = (newState == ScanState.Idle);
+
+        // Move camera to scan table only when all 4 markers are first detected
+        if (newState == ScanState.AllMarkersDetected && !_cameraMoved)
+        {
+            _cameraMoved = true;
+            ScanLanternManager.Instance?.OnScanningLanternTexture();
+        }
     }
 }
 }

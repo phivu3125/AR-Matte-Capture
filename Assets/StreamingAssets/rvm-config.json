@@ -1,0 +1,11 @@
+{
+	"_comment_1": "Edit nay roi restart app. Xem rvm-config.README.txt de biet them chi tiet.",
+	"_comment_2": "modelName: ten asset ONNX (khong .onnx). Phai co trong Available Models cua RVMCore.",
+	"_comment_3": "  Options: rvm_mobilenetv3_fp16 | rvm_mobilenetv3_fp32 | rvm_resnet50_fp16 | rvm_resnet50_fp32",
+	"_comment_4": "modelType: phai KHOP backbone cua model. MobileNetV3 | ResNet50",
+	"_comment_5": "backend: GPU | CPU",
+
+	"modelName": "rvm_mobilenetv3_fp16",
+	"modelType": "MobileNetV3",
+	"backend": "GPU"
+}

@@ -128,8 +128,8 @@ namespace ARMatteCapture.Scanning
             _expectedMarkerCount = totalCount;
             bool allDetected = (detectedCount == totalCount && totalCount > 0);
 
-            // Idle → Scanning on first detection
-            if (_state == ScanState.Idle && detectedCount > 0)
+            // Idle → Scanning only when all markers detected
+            if (_state == ScanState.Idle && allDetected)
             {
                 TransitionTo(ScanState.Scanning);
             }

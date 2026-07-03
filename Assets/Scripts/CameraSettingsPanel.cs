@@ -2,63 +2,65 @@ using UnityEngine;
 using ARMatteCapture.Webcam;
 
 /// <summary>
-/// Debug IMGUI panel for configuring webcam devices at runtime.
-/// Press Tab to toggle visibility.
-/// Attach to any active GameObject in the scene.
+/// Runtime settings panel for webcams.
+/// Press Tab to toggle. Compact IMGUI layout with collapsible sections.
+/// Model selection is loaded at startup from StreamingAssets/rvm-config.json (see RVMCore).
 /// </summary>
 public class CameraSettingsPanel : MonoBehaviour
 {
     #region Serialized Fields
 
     [Header("Toggle")]
-    [Tooltip("Key to toggle the settings panel")]
     [SerializeField] private KeyCode toggleKey = KeyCode.Tab;
 
     [Header("Panel")]
-    [Tooltip("Panel width in pixels")]
-    [SerializeField] private float panelWidth = 420f;
-
-    [Tooltip("Panel height in pixels")]
-    [SerializeField] private float panelHeight = 600f;
+    [SerializeField] private float panelWidth = 380f;
+    [SerializeField] private float panelHeight = 480f;
 
     #endregion
 
-    #region Private Fields
+    #region Private State
 
     private bool _showPanel;
     private WebCamDevice[] _devices;
     private string[] _deviceNames;
     private Vector2 _scrollPos;
 
-    // Cached references
+    // Cached refs
     private WebcamSource _portraitSource;
     private WebcamSource _paperScanSource;
 
+    // Foldouts
+    private bool _portraitOpen = true;
+    private bool _paperScanOpen = true;
+    private bool _devicesOpen = false;
+
     // Resolution presets
-    private static readonly string[] ResolutionLabels = {
-        "640×480", "1280×720", "1920×1080", "2560×1440"
-    };
+    private static readonly string[] ResolutionLabels = { "640×480", "720p", "1080p", "1440p" };
     private static readonly int[][] ResolutionValues = {
         new[] { 640, 480 },
         new[] { 1280, 720 },
         new[] { 1920, 1080 },
         new[] { 2560, 1440 }
     };
+    private static readonly string[] FpsLabels = { "15", "30", "60" };
+    private static readonly int[] FpsValues = { 15, 30, 60 };
 
     // Per-source state
     private int _portraitDeviceIdx;
-    private int _portraitResIdx = 2; // default 1920×1080
-    private int _portraitFps = 30;
+    private int _portraitResIdx = 2;
+    private int _portraitFpsIdx = 1;
 
     private int _paperScanDeviceIdx;
     private int _paperScanResIdx = 2;
-    private int _paperScanFps = 30;
+    private int _paperScanFpsIdx = 1;
 
-    // GUI style cache
+    // GUI styles
     private GUIStyle _headerStyle;
-    private GUIStyle _subHeaderStyle;
-    private GUIStyle _boxStyle;
-    private bool _stylesInitialized;
+    private GUIStyle _sectionHeaderStyle;
+    private GUIStyle _labelDim;
+    private GUIStyle _boxBg;
+    private bool _stylesInit;
 
     #endregion
 
@@ -66,9 +68,7 @@ public class CameraSettingsPanel : MonoBehaviour
 
     void Start()
     {
-        RefreshDeviceList();
-        CacheSources();
-        SyncStateFromSources();
+        RefreshAll();
     }
 
     void Update()
@@ -76,71 +76,56 @@ public class CameraSettingsPanel : MonoBehaviour
         if (Input.GetKeyDown(toggleKey))
         {
             _showPanel = !_showPanel;
-            if (_showPanel)
-            {
-                RefreshDeviceList();
-                CacheSources();
-                SyncStateFromSources();
-            }
+            if (_showPanel) RefreshAll();
         }
     }
 
     void OnGUI()
     {
         if (!_showPanel) return;
-
         InitStyles();
 
         float x = (Screen.width - panelWidth) / 2f;
         float y = (Screen.height - panelHeight) / 2f;
-        Rect panelRect = new Rect(x, y, panelWidth, panelHeight);
+        Rect rect = new Rect(x, y, panelWidth, panelHeight);
 
-        GUI.Box(panelRect, "");
+        GUI.Box(rect, GUIContent.none, _boxBg);
 
-        GUILayout.BeginArea(panelRect);
+        GUILayout.BeginArea(new Rect(rect.x + 8, rect.y + 8, rect.width - 16, rect.height - 16));
+
+        // Header
+        GUILayout.BeginHorizontal();
+        GUILayout.Label("⚙  Camera Settings", _headerStyle);
+        GUILayout.FlexibleSpace();
+        GUILayout.Label($"[{toggleKey}] close", _labelDim);
+        GUILayout.EndHorizontal();
+
+        GUILayout.Space(4);
         _scrollPos = GUILayout.BeginScrollView(_scrollPos);
 
-        GUILayout.Space(8);
-        GUILayout.Label("⚙ Camera Settings", _headerStyle);
-        GUILayout.Space(4);
-
-        // Device list
-        DrawDeviceList();
-
-        GUILayout.Space(12);
-
-        // Portrait source
-        DrawSourceSection(
-            "Portrait (RVM)", _portraitSource,
-            ref _portraitDeviceIdx, ref _portraitResIdx, ref _portraitFps
-        );
-
-        GUILayout.Space(12);
-
-        // Paper Scan source
-        DrawSourceSection(
-            "Paper Scan", _paperScanSource,
-            ref _paperScanDeviceIdx, ref _paperScanResIdx, ref _paperScanFps
-        );
-
-        GUILayout.Space(12);
-
-        // Refresh button
-        if (GUILayout.Button("🔄 Refresh Device List", GUILayout.Height(30)))
+        // Portrait
+        if (Foldout(ref _portraitOpen, "Portrait (RVM)"))
         {
-            RefreshDeviceList();
-            CacheSources();
-            SyncStateFromSources();
+            DrawSourceSection(_portraitSource, ref _portraitDeviceIdx, ref _portraitResIdx, ref _portraitFpsIdx);
         }
 
-        GUILayout.Space(4);
+        // Paper scan
+        if (Foldout(ref _paperScanOpen, "Paper Scan"))
+        {
+            DrawSourceSection(_paperScanSource, ref _paperScanDeviceIdx, ref _paperScanResIdx, ref _paperScanFpsIdx);
+        }
 
-        // Close
-        GUILayout.BeginHorizontal();
-        GUILayout.FlexibleSpace();
-        GUILayout.Label($"Press [{toggleKey}] to close", GUI.skin.label);
-        GUILayout.FlexibleSpace();
-        GUILayout.EndHorizontal();
+        // Devices (collapsed by default)
+        if (Foldout(ref _devicesOpen, $"Devices ({(_devices != null ? _devices.Length : 0)})"))
+        {
+            DrawDeviceList();
+        }
+
+        GUILayout.Space(6);
+        if (GUILayout.Button("Refresh", GUILayout.Height(24)))
+        {
+            RefreshAll();
+        }
 
         GUILayout.EndScrollView();
         GUILayout.EndArea();
@@ -150,91 +135,86 @@ public class CameraSettingsPanel : MonoBehaviour
 
     #region Drawing
 
+    private bool Foldout(ref bool open, string title)
+    {
+        GUILayout.Space(4);
+        GUILayout.BeginHorizontal();
+        string arrow = open ? "▼" : "▶";
+        if (GUILayout.Button($"{arrow}  {title}", _sectionHeaderStyle, GUILayout.Height(22)))
+            open = !open;
+        GUILayout.EndHorizontal();
+        return open;
+    }
+
     private void DrawDeviceList()
     {
-        GUILayout.Label("Available Cameras", _subHeaderStyle);
-
         if (_devices == null || _devices.Length == 0)
         {
-            GUILayout.Label("  No webcam devices found.");
+            GUILayout.Label("  No webcam devices found.", _labelDim);
             return;
         }
-
         for (int i = 0; i < _devices.Length; i++)
         {
-            string front = _devices[i].isFrontFacing ? " (front)" : "";
-            GUILayout.Label($"  [{i}] {_devices[i].name}{front}");
+            string front = _devices[i].isFrontFacing ? "  (front)" : "";
+            GUILayout.Label($"  [{i}]  {_devices[i].name}{front}", _labelDim);
         }
     }
 
-    private void DrawSourceSection(
-        string label, WebcamSource source,
-        ref int deviceIdx, ref int resIdx, ref int fps)
+    private void DrawSourceSection(WebcamSource source, ref int deviceIdx, ref int resIdx, ref int fpsIdx)
     {
-        GUILayout.Box("", _boxStyle, GUILayout.ExpandWidth(true), GUILayout.Height(2));
-        GUILayout.Label(label, _subHeaderStyle);
-
         if (source == null)
         {
-            GUILayout.Label("  (not assigned in WebcamManager)");
+            GUILayout.Label("  Not assigned in WebcamManager.", _labelDim);
             return;
         }
 
-        // Status
-        string status = source.IsPlaying ? "<color=green>● Playing</color>" : "<color=red>● Stopped</color>";
-        var richStyle = new GUIStyle(GUI.skin.label) { richText = true };
-        GUILayout.Label($"  Status: {status}  |  Actual: {source.ActualWidth}×{source.ActualHeight}", richStyle);
-        GUILayout.Label($"  Device: {source.DeviceName}");
+        // Status line
+        string statusColor = source.IsPlaying ? "#6bd16b" : "#d16b6b";
+        string statusDot = source.IsPlaying ? "● Playing" : "● Stopped";
+        var rich = new GUIStyle(GUI.skin.label) { richText = true, fontSize = 11 };
+        GUILayout.Label($"  <color={statusColor}>{statusDot}</color>  {source.ActualWidth}×{source.ActualHeight}  ·  {TrimDevice(source.DeviceName)}", rich);
 
-        GUILayout.Space(4);
-
-        // Device selection
+        // Device compact dropdown via selection grid (2 columns to save vertical space)
         if (_devices != null && _devices.Length > 0)
         {
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("  Device:", GUILayout.Width(70));
-            int newIdx = GUILayout.SelectionGrid(deviceIdx, _deviceNames, 1);
-            GUILayout.EndHorizontal();
-
-            if (newIdx != deviceIdx)
-            {
-                deviceIdx = newIdx;
-            }
+            int cols = _devices.Length >= 2 ? 2 : 1;
+            deviceIdx = GUILayout.SelectionGrid(Mathf.Clamp(deviceIdx, 0, _devices.Length - 1), _deviceNames, cols);
         }
 
-        GUILayout.Space(4);
-
-        // Resolution selection
+        // Resolution + FPS on same row-pair
         GUILayout.BeginHorizontal();
-        GUILayout.Label("  Resolution:", GUILayout.Width(80));
-        resIdx = GUILayout.SelectionGrid(resIdx, ResolutionLabels, ResolutionLabels.Length);
+        GUILayout.Label("  Res:", GUILayout.Width(42));
+        resIdx = GUILayout.Toolbar(resIdx, ResolutionLabels);
         GUILayout.EndHorizontal();
 
-        // FPS
         GUILayout.BeginHorizontal();
-        GUILayout.Label("  FPS:", GUILayout.Width(80));
-        if (GUILayout.Button("15")) fps = 15;
-        if (GUILayout.Button("30")) fps = 30;
-        if (GUILayout.Button("60")) fps = 60;
-        GUILayout.Label($"  → {fps}", GUILayout.Width(50));
+        GUILayout.Label("  FPS:", GUILayout.Width(42));
+        fpsIdx = GUILayout.Toolbar(fpsIdx, FpsLabels);
         GUILayout.EndHorizontal();
 
-        GUILayout.Space(4);
-
-        // Apply button
-        GUILayout.BeginHorizontal();
-        GUILayout.Space(10);
-        if (GUILayout.Button($"✅ Apply to {label}", GUILayout.Height(28)))
+        GUILayout.Space(2);
+        if (GUILayout.Button("Apply", GUILayout.Height(22)))
         {
-            ApplySettings(source, deviceIdx, resIdx, fps);
+            ApplySettings(source, deviceIdx, resIdx, fpsIdx);
         }
-        GUILayout.Space(10);
-        GUILayout.EndHorizontal();
+    }
+
+    private string TrimDevice(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return "(no device)";
+        return name.Length > 28 ? name.Substring(0, 28) + "…" : name;
     }
 
     #endregion
 
     #region Logic
+
+    private void RefreshAll()
+    {
+        RefreshDeviceList();
+        CacheSources();
+        SyncStateFromSources();
+    }
 
     private void RefreshDeviceList()
     {
@@ -243,7 +223,10 @@ public class CameraSettingsPanel : MonoBehaviour
         for (int i = 0; i < _devices.Length; i++)
         {
             string front = _devices[i].isFrontFacing ? " (front)" : "";
-            _deviceNames[i] = $"[{i}] {_devices[i].name}{front}";
+            string trimmed = _devices[i].name.Length > 22
+                ? _devices[i].name.Substring(0, 22) + "…"
+                : _devices[i].name;
+            _deviceNames[i] = $"[{i}] {trimmed}{front}";
         }
     }
 
@@ -256,77 +239,84 @@ public class CameraSettingsPanel : MonoBehaviour
 
     private void SyncStateFromSources()
     {
-        SyncSourceState(_portraitSource, ref _portraitDeviceIdx, ref _portraitResIdx, ref _portraitFps);
-        SyncSourceState(_paperScanSource, ref _paperScanDeviceIdx, ref _paperScanResIdx, ref _paperScanFps);
+        SyncSourceState(_portraitSource, ref _portraitDeviceIdx, ref _portraitResIdx, ref _portraitFpsIdx);
+        SyncSourceState(_paperScanSource, ref _paperScanDeviceIdx, ref _paperScanResIdx, ref _paperScanFpsIdx);
     }
 
-    private void SyncSourceState(WebcamSource source, ref int deviceIdx, ref int resIdx, ref int fps)
+    private void SyncSourceState(WebcamSource source, ref int deviceIdx, ref int resIdx, ref int fpsIdx)
     {
         if (source == null || _devices == null) return;
 
-        // Match current device name to index
         string currentName = source.DeviceName;
         deviceIdx = 0;
         for (int i = 0; i < _devices.Length; i++)
         {
-            if (_devices[i].name == currentName)
-            {
-                deviceIdx = i;
-                break;
-            }
+            if (_devices[i].name == currentName) { deviceIdx = i; break; }
         }
 
-        // Match current resolution to preset index
-        int w = source.RequestedWidth;
-        int h = source.RequestedHeight;
-        resIdx = 2; // default 1920×1080
+        int w = source.RequestedWidth, h = source.RequestedHeight;
+        resIdx = 2;
         for (int i = 0; i < ResolutionValues.Length; i++)
         {
-            if (ResolutionValues[i][0] == w && ResolutionValues[i][1] == h)
-            {
-                resIdx = i;
-                break;
-            }
+            if (ResolutionValues[i][0] == w && ResolutionValues[i][1] == h) { resIdx = i; break; }
         }
 
-        fps = source.RequestedFPS;
+        fpsIdx = 1;
+        int fps = source.RequestedFPS;
+        for (int i = 0; i < FpsValues.Length; i++)
+        {
+            if (FpsValues[i] == fps) { fpsIdx = i; break; }
+        }
     }
 
-    private void ApplySettings(WebcamSource source, int deviceIdx, int resIdx, int fps)
+    private void ApplySettings(WebcamSource source, int deviceIdx, int resIdx, int fpsIdx)
     {
         if (source == null || _devices == null || _devices.Length == 0) return;
 
-        int clampedIdx = Mathf.Clamp(deviceIdx, 0, _devices.Length - 1);
-        string targetDevice = _devices[clampedIdx].name;
+        int di = Mathf.Clamp(deviceIdx, 0, _devices.Length - 1);
+        int ri = Mathf.Clamp(resIdx, 0, ResolutionValues.Length - 1);
+        int fi = Mathf.Clamp(fpsIdx, 0, FpsValues.Length - 1);
 
-        int clampedRes = Mathf.Clamp(resIdx, 0, ResolutionValues.Length - 1);
-        int w = ResolutionValues[clampedRes][0];
-        int h = ResolutionValues[clampedRes][1];
+        string device = _devices[di].name;
+        int w = ResolutionValues[ri][0];
+        int h = ResolutionValues[ri][1];
+        int fps = FpsValues[fi];
 
-        Debug.Log($"[CameraSettings] Applying: device='{targetDevice}', res={w}×{h}, fps={fps}");
-
-        source.Configure(targetDevice, w, h, fps);
+        Debug.Log($"[CameraSettings] Apply webcam: device='{device}' {w}×{h}@{fps}");
+        source.Configure(device, w, h, fps);
     }
 
     private void InitStyles()
     {
-        if (_stylesInitialized) return;
-        _stylesInitialized = true;
+        if (_stylesInit) return;
+        _stylesInit = true;
 
         _headerStyle = new GUIStyle(GUI.skin.label)
         {
-            fontSize = 18,
+            fontSize = 15,
             fontStyle = FontStyle.Bold,
-            alignment = TextAnchor.MiddleCenter
+            alignment = TextAnchor.MiddleLeft
         };
 
-        _subHeaderStyle = new GUIStyle(GUI.skin.label)
+        _sectionHeaderStyle = new GUIStyle(GUI.skin.button)
         {
-            fontSize = 14,
-            fontStyle = FontStyle.Bold
+            fontSize = 12,
+            fontStyle = FontStyle.Bold,
+            alignment = TextAnchor.MiddleLeft,
+            padding = new RectOffset(8, 8, 4, 4)
         };
 
-        _boxStyle = new GUIStyle(GUI.skin.box);
+        _labelDim = new GUIStyle(GUI.skin.label)
+        {
+            fontSize = 11,
+            normal = { textColor = new Color(0.75f, 0.75f, 0.75f) }
+        };
+
+        // Opaque dark background so IMGUI box doesn't look like transparent glass.
+        var bgTex = new Texture2D(1, 1);
+        bgTex.SetPixel(0, 0, new Color(0.08f, 0.08f, 0.09f, 0.94f));
+        bgTex.Apply();
+        _boxBg = new GUIStyle(GUI.skin.box) { normal = { background = bgTex } };
     }
 
     #endregion

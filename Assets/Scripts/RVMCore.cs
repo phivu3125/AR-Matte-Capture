@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using ARMatteCapture.Webcam;
 using Unity.InferenceEngine;
 using UnityEngine;
@@ -34,6 +35,13 @@ public class RVMCore : MonoBehaviour
 
     [Tooltip("Backend for model inference (GPU recommended, CPU for compatibility)")]
     public BackendMode backendMode = BackendMode.GPU;
+
+    [Header("Model Config (StreamingAssets)")]
+    [Tooltip("Available ONNX models. Looked up by asset name from rvm-config.json at startup.")]
+    public ModelAsset[] availableModels;
+
+    [Tooltip("Filename under StreamingAssets. Leave empty to skip config loading and use Inspector values.")]
+    public string configFileName = "rvm-config.json";
 
     [Header("Compute Shader")]
     [Tooltip("RVM Composite compute shader")]
@@ -156,6 +164,7 @@ public class RVMCore : MonoBehaviour
     #region Unity Lifecycle
     void Start()
     {
+        LoadConfigFromStreamingAssets();
         if (!InitializeModel()) { enabled = false; return; }
         InitializeComputeShader();
         InitializeInputSource();
@@ -180,6 +189,80 @@ public class RVMCore : MonoBehaviour
     #endregion
 
     #region Initialization
+    [Serializable]
+    private class RVMConfig
+    {
+        public string modelName;   // asset name, e.g. "rvm_mobilenetv3_fp16"
+        public string modelType;   // "MobileNetV3" or "ResNet50"
+        public string backend;     // "GPU" or "CPU"
+    }
+
+    private void LoadConfigFromStreamingAssets()
+    {
+        if (string.IsNullOrEmpty(configFileName)) return;
+
+        string path = Path.Combine(Application.streamingAssetsPath, configFileName);
+        if (!File.Exists(path))
+        {
+            Debug.Log($"[RVM] No config file at {path}, using Inspector values.");
+            return;
+        }
+
+        try
+        {
+            string json = File.ReadAllText(path);
+            var cfg = JsonUtility.FromJson<RVMConfig>(json);
+            if (cfg == null)
+            {
+                Debug.LogWarning("[RVM] Config file parsed as null, using Inspector values.");
+                return;
+            }
+
+            // Resolve model by asset name
+            if (!string.IsNullOrEmpty(cfg.modelName) && availableModels != null)
+            {
+                ModelAsset match = null;
+                for (int i = 0; i < availableModels.Length; i++)
+                {
+                    if (availableModels[i] != null && availableModels[i].name == cfg.modelName)
+                    {
+                        match = availableModels[i];
+                        break;
+                    }
+                }
+                if (match != null)
+                {
+                    modelAsset = match;
+                    Debug.Log($"[RVM] Config: model='{cfg.modelName}' resolved.");
+                }
+                else
+                {
+                    Debug.LogWarning($"[RVM] Config: model '{cfg.modelName}' not found in availableModels. Using Inspector asset.");
+                }
+            }
+
+            // Resolve backbone type
+            if (!string.IsNullOrEmpty(cfg.modelType) &&
+                Enum.TryParse<ModelType>(cfg.modelType, true, out var mt))
+            {
+                modelType = mt;
+            }
+
+            // Resolve backend
+            if (!string.IsNullOrEmpty(cfg.backend) &&
+                Enum.TryParse<BackendMode>(cfg.backend, true, out var be))
+            {
+                backendMode = be;
+            }
+
+            Debug.Log($"[RVM] Config applied: type={modelType}, backend={backendMode}");
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"[RVM] Failed to load config '{path}': {e.Message}");
+        }
+    }
+
     private bool InitializeModel()
     {
         if (modelAsset == null) { Debug.LogError("[RVM] Model asset not assigned!"); return false; }
@@ -561,8 +644,15 @@ public class RVMCore : MonoBehaviour
 
     private void DisposeRecurrentStates()
     {
-        r1?.Dispose(); r2?.Dispose(); r3?.Dispose(); r4?.Dispose();
+        // Null-first pattern: clear refs before dispose so early return in
+        // InitializeRecurrentStates (r1 != null check) never sees a stale ref
+        // even if Dispose() throws (e.g., tensor already freed by worker pool).
+        var a = r1; var b = r2; var c = r3; var d = r4;
         r1 = null; r2 = null; r3 = null; r4 = null;
+        try { a?.Dispose(); } catch { }
+        try { b?.Dispose(); } catch { }
+        try { c?.Dispose(); } catch { }
+        try { d?.Dispose(); } catch { }
     }
     #endregion
 
